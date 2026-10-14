@@ -258,6 +258,16 @@ unsafe extern "C-unwind" fn callback(
 pub fn click(point: Point) -> Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::Private)
         .context("could not create a click event source")?;
+    // Some native views update their internal pointer position only on motion.
+    // Deliver the normal move-before-click sequence so their click lands at the
+    // displayed dot rather than the last position reported by a physical mouse.
+    let motion = CGEvent::new_mouse_event(
+        Some(&source),
+        CGEventType::MouseMoved,
+        objc2_core_foundation::CGPoint::new(point.x, point.y),
+        CGMouseButton::Left,
+    )
+    .context("could not create mouse motion")?;
     let down = CGEvent::new_mouse_event(
         Some(&source),
         CGEventType::LeftMouseDown,
@@ -272,10 +282,14 @@ pub fn click(point: Point) -> Result<()> {
         CGMouseButton::Left,
     )
     .context("could not create mouse-up")?;
-    for event in [&down, &up] {
+    // Complete allocation before posting anything, including cursor movement.
+    for event in [&motion, &down, &up] {
         CGEvent::set_flags(Some(event), CGEventFlags::empty());
+    }
+    for event in [&down, &up] {
         CGEvent::set_integer_value_field(Some(event), CGEventField::MouseEventClickState, 1);
     }
+    CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&motion));
     CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&down));
     CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&up));
     Ok(())
