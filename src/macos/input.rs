@@ -1,5 +1,5 @@
 use super::{app::Controller, scheduling};
-use crate::navigation::Point;
+use crate::navigation::{NavigationMode, Point};
 use crate::routing::{Command, KeyRouter, Modifiers};
 use anyhow::{Context, Result};
 use objc2_core_foundation::{
@@ -42,6 +42,12 @@ impl Dispatch {
     pub fn activate(&self) {
         self.advance();
         self.router.borrow_mut().activate();
+    }
+    pub fn mode(&self) -> NavigationMode {
+        self.router.borrow().mode()
+    }
+    pub fn set_mode(&self, mode: NavigationMode) {
+        self.router.borrow_mut().set_mode(mode);
     }
     pub fn stop(&self) {
         self.router.borrow_mut().deactivate();

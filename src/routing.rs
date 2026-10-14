@@ -50,7 +50,13 @@ impl KeyRouter {
     pub fn activate(&mut self) {
         self.cancel_repeats();
         self.active = true;
-        self.mode = NavigationMode::Quadtree;
+    }
+    pub fn mode(&self) -> NavigationMode {
+        self.mode
+    }
+    pub fn set_mode(&mut self, mode: NavigationMode) {
+        self.cancel_repeats();
+        self.mode = mode;
     }
     pub fn deactivate(&mut self) {
         self.cancel_repeats();
@@ -190,10 +196,14 @@ impl KeyRouter {
             }
             (true, Some(command))
         } else {
-            // Preserve the original key event. Only navigation commands acquire
-            // key ownership; ordinary typing and shortcuts return to the target.
+            // A dismissal key belongs to the overlay, just like Escape. Sending
+            // it to the target can type unwanted text or trigger its error beep.
+            self.held[code] = Some(OwnedPress {
+                modifiers,
+                repeat_action: None,
+            });
             self.deactivate();
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         }
     }
 }
@@ -246,7 +256,7 @@ mod tests {
                 },
                 false
             ),
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         );
         assert!(!router.is_active());
         router.activate();
@@ -260,7 +270,7 @@ mod tests {
                 },
                 false
             ),
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         );
         assert!(!router.is_active());
         router.activate();
@@ -277,10 +287,10 @@ mod tests {
                         },
                         false
                     ),
-                    (false, Some(Command::Dismiss))
+                    (true, Some(Command::Dismiss))
                 );
                 assert!(!router.is_active());
-                assert!(!router.release(code));
+                assert!(router.release(code));
             }
         }
     }
@@ -336,9 +346,9 @@ mod tests {
         assert!(router.release(46));
         assert_eq!(
             router.press(4, Modifiers::default(), false),
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         );
-        assert!(!router.release(4));
+        assert!(router.release(4));
         router.activate();
         assert_eq!(
             router.press(40, Modifiers::default(), false),
@@ -355,6 +365,18 @@ mod tests {
                 false
             ),
             (true, Some(Command::PreviousDisplay))
+        );
+        assert!(router.release(4));
+        router.deactivate();
+        router.set_mode(NavigationMode::Grid);
+        router.activate();
+        assert_eq!(router.mode(), NavigationMode::Grid);
+        router.deactivate();
+        router.activate();
+        assert_eq!(router.mode(), NavigationMode::Grid);
+        assert_eq!(
+            router.press(4, Modifiers::default(), false),
+            (true, Some(Command::Move(Direction::Left)))
         );
         assert!(router.release(4));
     }
@@ -404,6 +426,7 @@ mod tests {
             assert!(router.press(code, plain, false).1.is_some());
             router.deactivate();
             assert_eq!(router.press(code, plain, true), (true, None));
+            router.set_mode(NavigationMode::Quadtree);
             router.activate();
             assert_eq!(router.press(code, plain, true), (true, None));
             assert!(router.release(code));
@@ -572,10 +595,10 @@ mod tests {
             router.activate();
             assert_eq!(
                 router.press(49, disallowed, false),
-                (false, Some(Command::Dismiss))
+                (true, Some(Command::Dismiss))
             );
             assert!(!router.is_active());
-            assert!(!router.release(49));
+            assert!(router.release(49));
         }
         assert_eq!(router.press(49, Modifiers::default(), false), (false, None));
         assert_eq!(router.modifier_changed(63, true), None);
@@ -590,7 +613,7 @@ mod tests {
         assert!(!router.release(49));
     }
     #[test]
-    fn ordinary_typing_and_unowned_repeats_dismiss_without_acquiring_key_ownership() {
+    fn dismissal_keys_are_silent_and_preserve_existing_target_presses() {
         let mut router = KeyRouter::default();
         assert_eq!(router.press(32, Modifiers::default(), false), (false, None));
         router.activate();
@@ -604,10 +627,15 @@ mod tests {
         assert!(router.press(38, Modifiers::default(), false).0);
         assert_eq!(
             router.press(0, Modifiers::default(), false),
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         );
         assert!(!router.is_active());
-        assert!(!router.release(0));
+        assert_eq!(router.press(0, Modifiers::default(), true), (true, None));
+        router.activate();
+        assert_eq!(router.press(0, Modifiers::default(), true), (true, None));
+        assert!(router.release(0));
+        router.deactivate();
+        assert_eq!(router.press(0, Modifiers::default(), false), (false, None));
         assert!(router.release(38));
         assert!(!router.release(300));
 
@@ -626,9 +654,9 @@ mod tests {
             router.modifier_changed(63, true);
             assert_eq!(
                 router.press(code, function, false),
-                (false, Some(Command::Dismiss))
+                (true, Some(Command::Dismiss))
             );
-            assert!(!router.release(code));
+            assert!(router.release(code));
         }
         router.modifier_changed(63, false);
         router.activate();
@@ -639,7 +667,7 @@ mod tests {
         assert!(router.release(76));
         assert_eq!(
             router.press(49, Modifiers::default(), false),
-            (false, Some(Command::Dismiss))
+            (true, Some(Command::Dismiss))
         );
         for code in [54, 55, 58, 61, 59, 62, 57] {
             router.activate();
