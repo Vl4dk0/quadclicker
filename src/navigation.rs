@@ -1,5 +1,7 @@
 //! Selection geometry uses top-left origins in logical screen points.
 
+pub const MAX_DEPTH: usize = 9;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
     pub x: f64,
@@ -92,6 +94,9 @@ impl Selection {
         self.current
     }
     pub fn descend(&mut self, quadrant: Quadrant) {
+        if self.parents.len() >= MAX_DEPTH {
+            return;
+        }
         if let Some(child) = self.current.quarter(quadrant) {
             self.parents.push(self.current);
             self.current = child;
@@ -144,7 +149,7 @@ mod tests {
         assert_eq!(selection.current(), root);
     }
     #[test]
-    fn finite_bounds_and_subdivision_floor() {
+    fn finite_bounds_and_navigation_limits() {
         for dimensions in [
             (f64::NAN, 1.0),
             (1.0, f64::INFINITY),
@@ -162,6 +167,37 @@ mod tests {
         selection.descend(Quadrant::TopLeft);
         assert_eq!(selection.current(), last);
         assert_eq!(last.width, 1.5);
+
+        // Large bounds keep the point-size floor out of the depth-limit case.
+        let Some(root) = Rect::new(0.0, 0.0, 4096.0, 4096.0) else {
+            panic!("valid fixture")
+        };
+        let mut selection = Selection::new(root);
+        for _ in 0..9 {
+            selection.descend(Quadrant::TopLeft);
+        }
+        let ninth = selection.current();
+        assert_eq!(ninth.width, 8.0);
+        selection.descend(Quadrant::BottomRight);
+        assert_eq!(selection.current(), ninth);
+        selection.back();
+        assert_eq!(selection.current().width, 16.0);
+        selection.descend(Quadrant::BottomRight);
+        assert_eq!(
+            selection.current(),
+            Rect {
+                x: 8.0,
+                y: 8.0,
+                width: 8.0,
+                height: 8.0
+            }
+        );
+        selection.reset();
+        assert_eq!(selection.current(), root);
+        for _ in 0..9 {
+            selection.descend(Quadrant::TopLeft);
+        }
+        assert_eq!(selection.current(), ninth);
     }
     #[test]
     fn coordinate_mapping_negative_origin_and_scaled_display() {
