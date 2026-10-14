@@ -11,11 +11,11 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuDelegate,
-    NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSAccessibility, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage,
+    NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, ns_string,
+    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSSize, ns_string,
 };
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -279,7 +279,15 @@ impl Delegate {
         let button = item
             .button(mtm)
             .context("could not create the menu bar button")?;
-        button.setTitle(ns_string!("QC"));
+        let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            ns_string!("square.split.2x2"),
+            Some(ns_string!("QuadClicker")),
+        )
+        .context("could not load the QuadClicker menu bar symbol")?;
+        icon.setSize(NSSize::new(18.0, 18.0));
+        icon.setTemplate(true);
+        button.setImage(Some(&icon));
+        button.setAccessibilityLabel(Some(ns_string!("QuadClicker")));
         button.setToolTip(Some(ns_string!("QuadClicker")));
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
