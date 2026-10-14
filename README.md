@@ -16,13 +16,13 @@ The build produces a locally signed app at `dist/QuadClicker.app`; the next comm
 
 ## Accessibility permission
 
-When permission is missing, QuadClicker requests Accessibility access through macOS and opens **System Settings → Privacy & Security → Accessibility**. You can also open setup through **QC → Accessibility Setup…** in the menu bar. Enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications`, select **QuadClicker.app**, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
+Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, choose **QC → Quit** and reopen it.
 
 No Screen Recording permission is needed. After rebuilding, if macOS stops recognizing the permission, remove the app from the Accessibility list, add the newly built app, and reopen it.
 
 ## Navigation
 
-Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit QuadClicker** exits the app.
+Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **QC → Quit** exits the app.
 
 Press the physical Mission Control button to open or close the overlay. The keyboard's normal brightness and volume behavior stays unchanged. Double Option and Fn+Space activation are deferred.
 
