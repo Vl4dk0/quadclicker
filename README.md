@@ -18,7 +18,7 @@ Click anywhere using your keyboard.
 | Mode | Controls |
 | --- | --- |
 | Quadtree | H / J / K / L: top left / bottom left / bottom right / top right quarter; up to nine subdivisions |
-| Grid | H / J / K / L: left / down / up / right. Shift+J halves cells per side; Shift+K doubles them |
+| Grid | H / J / K / L: left / down / up / right. Shift+J doubles cells per side; Shift+K halves them |
 
 Hold navigation keys to repeat using macOS’s keyboard repeat delay and speed. Click, mode switch, hint toggle, reset, activation, and display switch run once per press.
 

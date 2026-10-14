@@ -23,7 +23,7 @@ A consumed press owns its down, repeats, and final up. Releasing Fn before Space
 
 M switches modes around the current click target: the destination selection contains that point, although its midpoint can change. Grid density is retained within the active session. Navigation uses macOS autorepeat events and the user’s normal repeat settings; no repeat timer is added. Mode changes, hint toggles, clicks, resets, activation, and display switching execute once per press. Enter always clicks the selected rectangle's midpoint.
 
-Quadtree uses H/J/K/L for top-left/bottom-left/bottom-right/top-right quadrants. Grid uses H/J/K/L for left/down/up/right and Shift+J/Shift+K to halve/double cells per side. Resizing selects the cell containing the previous midpoint. Movement stops at display edges.
+Quadtree uses H/J/K/L for top-left/bottom-left/bottom-right/top-right quadrants. Grid uses H/J/K/L for left/down/up/right and Shift+J/Shift+K to double/halve cells per side. Resizing selects the cell containing the previous midpoint. Movement stops at display edges.
 
 O and Backspace select the parent in Quadtree and do nothing in Grid. Shift+O and Shift+Backspace reset the current mode: Quadtree to its root, Grid to screen-centred 2×2. Unmodified H selects Quadtree’s top-left quarter or moves Grid left. Shift+H and Shift+L select the previous or next display in both modes.
 

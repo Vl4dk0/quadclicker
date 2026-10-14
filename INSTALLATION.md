@@ -21,7 +21,7 @@ Grid is the default when no valid mode preference has been saved; an existing Qu
 
 Holding navigation keys repeats using macOS’s keyboard repeat delay and speed: H/J/K/L and Shift+J/Shift+K in Grid; H/J/K/L, O, and Backspace in Quadtree. Click, mode switch, hint toggle, reset, activation, and display switch act once per press.
 
-In Quadtree, H/J/K/L select the top-left/bottom-left/bottom-right/top-right quarter. In Grid, H/J/K/L move left/down/up/right; Shift+J halves cells per side and Shift+K doubles them. Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size.
+In Quadtree, H/J/K/L select the top-left/bottom-left/bottom-right/top-right quarter. In Grid, H/J/K/L move left/down/up/right; Shift+J doubles cells per side and Shift+K halves them. Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size.
 
 Shift+H and Shift+L switch to the previous or next display in both modes. Displays are ordered left to right, then top to bottom, with wraparound. Switching preserves the mode, grid density or quadtree depth, and the target’s relative position; depth or density is reduced only when needed to keep cells at least one logical point. Shift+J and Shift+K resize only in Grid.
 

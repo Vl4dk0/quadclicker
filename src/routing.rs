@@ -172,10 +172,10 @@ impl KeyRouter {
                     Some(Command::ShowHints(self.show_hints))
                 }
                 38 if modifiers.shift && self.mode == NavigationMode::Grid => {
-                    Some(Command::ResizeGrid { refine: false })
+                    Some(Command::ResizeGrid { refine: true })
                 }
                 40 if modifiers.shift && self.mode == NavigationMode::Grid => {
-                    Some(Command::ResizeGrid { refine: true })
+                    Some(Command::ResizeGrid { refine: false })
                 }
                 4 if modifiers.shift => Some(Command::PreviousDisplay),
                 37 if modifiers.shift => Some(Command::NextDisplay),
@@ -387,7 +387,7 @@ mod tests {
             shift: true,
             ..Modifiers::default()
         };
-        for (code, refine) in [(38, false), (40, true)] {
+        for (code, refine) in [(38, true), (40, false)] {
             let command = Command::ResizeGrid { refine };
             assert_eq!(router.press(code, shifted, false), (true, Some(command)));
             assert_eq!(router.press(code, shifted, true), (true, Some(command)));
