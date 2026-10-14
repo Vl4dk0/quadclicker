@@ -44,4 +44,4 @@ Navigation allows at most nine subdivisions; further quadrant presses leave the 
 
 The starting rectangle is the display containing the pointer. The overlay lets mouse clicks pass through to the app beneath it.
 
-Navigation uses the physical U/I/J/K positions, independent of keyboard layout. Hold Shift if desired; Enter clicks only without modifiers. Other keys or unsupported shortcuts hide the overlay and pass through to the app underneath; modifier keys alone leave it open. Holding a key does not repeat actions. Escape always hides the overlay.
+Navigation uses the physical U/I/J/K positions, independent of keyboard layout. Hold Shift if desired; Enter clicks only without modifiers. Other keys or unsupported shortcuts hide the overlay and pass through to the app underneath; Shift alone leaves it open. Holding a key does not repeat actions. Escape always hides the overlay.
