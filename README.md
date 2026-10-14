@@ -16,15 +16,15 @@ The build produces a signed app at `dist/QuadClicker.app`; the next command inst
 
 ## Accessibility permission
 
-On first launch, macOS may prompt for Accessibility access. Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, choose **QC → Quit** and reopen it.
+On first launch, macOS may prompt for Accessibility access. Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **Activate** from QuadClicker's menu bar menu, or reopen the app. If macOS requires a restart, choose **Quit** from its menu and reopen it.
 
 No Screen Recording permission is needed. Switching from an earlier ad-hoc build to the certificate-signed app requires granting permission again once. If macOS no longer recognizes the permission, remove the stale QuadClicker entry, add `/Applications/QuadClicker.app`, and reopen it.
 
 ## Navigation
 
-Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **QC → Quit** exits the app.
+Opening QuadClicker activates the overlay. Choose **Activate** from its menu bar menu, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit** exits the app.
 
-Press the physical Mission Control button to open or close the overlay. The keyboard's normal brightness and volume behavior stays unchanged. Double Option and Fn+Space activation are deferred.
+Press the physical Mission Control button or **Fn+Space** to open or close the overlay. The keyboard's normal brightness and volume behavior stays unchanged. Double Option activation is deferred.
 
 Each direction selects one quarter of the current rectangle:
 
@@ -44,4 +44,4 @@ Navigation allows at most nine subdivisions; further quadrant presses leave the 
 
 The starting rectangle is the display containing the pointer. The overlay lets mouse clicks pass through to the app beneath it.
 
-Navigation uses the physical U/I/J/K positions, independent of keyboard layout. Hold Shift if desired; Enter clicks only without modifiers. Other keys or unsupported shortcuts hide the overlay and pass through to the app underneath; Shift alone leaves it open. Holding a key does not repeat actions. Escape always hides the overlay.
+Navigation uses the physical U/I/J/K positions, independent of keyboard layout. Hold Shift if desired; Enter clicks only without modifiers. Other keys or unsupported shortcuts hide the overlay and pass through to the app underneath; Shift or Fn alone leaves it open. Holding a key does not repeat actions. Escape always hides the overlay.
