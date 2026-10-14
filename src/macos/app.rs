@@ -12,8 +12,7 @@ use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAccessibility, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage,
-    NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSStatusItemBehavior,
-    NSVariableStatusItemLength,
+    NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSSize, ns_string,
@@ -231,7 +230,6 @@ define_class!(
         fn launched(&self, _notification: &NSNotification) { self.ivars().controller.launch(); }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _app: &NSApplication, _visible: bool) -> bool {
-            if let Some(item) = self.ivars().status_item.get() { item.setVisible(true); }
             self.ivars().controller.request_activation(); false
         }
         #[unsafe(method(applicationWillTerminate:))]
@@ -278,9 +276,6 @@ impl Delegate {
     fn install_menu(&self) -> Result<()> {
         let mtm = self.mtm();
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-        // Native removal hides the item while the activation listener keeps
-        // running. Explicit reopen restores access to the app's Quit command.
-        item.setBehavior(NSStatusItemBehavior::RemovalAllowed);
         let button = item
             .button(mtm)
             .context("could not create the menu bar button")?;
@@ -318,9 +313,6 @@ impl Delegate {
             menu.addItem(&menu_item);
         }
         item.setMenu(Some(&menu));
-        // Restore the user's native visibility preference after configuring the
-        // button and menu. Ordinary launch preserves a previously hidden item.
-        item.setAutosaveName(Some(ns_string!("QuadClicker.StatusItem")));
         self.ivars()
             .status_item
             .set(item)
