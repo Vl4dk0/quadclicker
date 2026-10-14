@@ -82,7 +82,13 @@ impl KeyRouter {
         }
         if code == 160 && !modifiers.shortcut && !modifiers.shift && !repeat {
             *held = true;
-            return (true, Some(Command::Activate));
+            let command = if self.active {
+                self.active = false;
+                Command::Exit
+            } else {
+                Command::Activate
+            };
+            return (true, Some(command));
         }
         if !self.active {
             return (false, None);
@@ -222,6 +228,14 @@ mod tests {
             router.press(160, Modifiers::default(), false),
             (true, Some(Command::Activate))
         );
+        assert_eq!(router.press(160, Modifiers::default(), true), (true, None));
+        assert!(router.release(160));
+        router.activate();
+        assert_eq!(
+            router.press(160, Modifiers::default(), false),
+            (true, Some(Command::Exit))
+        );
+        assert!(!router.is_active());
         assert_eq!(router.press(160, Modifiers::default(), true), (true, None));
         assert!(router.release(160));
         assert!(
