@@ -16,7 +16,7 @@ The build produces a signed app at `dist/QuadClicker.app`; the next command inst
 
 ## Accessibility permission
 
-Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, choose **QC → Quit** and reopen it.
+On first launch, macOS may prompt for Accessibility access. Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, choose **QC → Quit** and reopen it.
 
 No Screen Recording permission is needed. Switching from an earlier ad-hoc build to the certificate-signed app requires granting permission again once. If macOS no longer recognizes the permission, remove the stale QuadClicker entry, add `/Applications/QuadClicker.app`, and reopen it.
 
