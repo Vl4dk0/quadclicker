@@ -7,6 +7,7 @@ pub enum Command {
     Move(Direction),
     ResizeGrid { refine: bool },
     SwitchMode(NavigationMode),
+    ShowHints(bool),
     PreviousDisplay,
     NextDisplay,
     Back,
@@ -33,6 +34,7 @@ struct OwnedPress {
 pub struct KeyRouter {
     active: bool,
     mode: NavigationMode,
+    show_hints: bool,
     held: [Option<OwnedPress>; 256],
 }
 
@@ -40,7 +42,8 @@ impl Default for KeyRouter {
     fn default() -> Self {
         Self {
             active: false,
-            mode: NavigationMode::Quadtree,
+            mode: NavigationMode::default(),
+            show_hints: false,
             held: [None; 256],
         }
     }
@@ -53,6 +56,12 @@ impl KeyRouter {
     }
     pub fn mode(&self) -> NavigationMode {
         self.mode
+    }
+    pub fn show_hints(&self) -> bool {
+        self.show_hints
+    }
+    pub fn set_show_hints(&mut self, show: bool) {
+        self.show_hints = show;
     }
     pub fn set_mode(&mut self, mode: NavigationMode) {
         self.cancel_repeats();
@@ -158,6 +167,16 @@ impl KeyRouter {
                     };
                     Some(Command::SwitchMode(self.mode))
                 }
+                17 if !modifiers.shift => {
+                    self.show_hints = !self.show_hints;
+                    Some(Command::ShowHints(self.show_hints))
+                }
+                38 if modifiers.shift && self.mode == NavigationMode::Grid => {
+                    Some(Command::ResizeGrid { refine: false })
+                }
+                40 if modifiers.shift && self.mode == NavigationMode::Grid => {
+                    Some(Command::ResizeGrid { refine: true })
+                }
                 4 if modifiers.shift => Some(Command::PreviousDisplay),
                 37 if modifiers.shift => Some(Command::NextDisplay),
                 31 | 51 if modifiers.shift => Some(Command::Reset),
@@ -165,16 +184,14 @@ impl KeyRouter {
                 36 | 76 if !modifiers.shift => Some(Command::Click),
                 _ if modifiers.shift => None,
                 _ => match (self.mode, code) {
-                    (NavigationMode::Quadtree, 32) => Some(Command::Descend(Quadrant::TopLeft)),
-                    (NavigationMode::Quadtree, 34) => Some(Command::Descend(Quadrant::TopRight)),
+                    (NavigationMode::Quadtree, 4) => Some(Command::Descend(Quadrant::TopLeft)),
+                    (NavigationMode::Quadtree, 37) => Some(Command::Descend(Quadrant::TopRight)),
                     (NavigationMode::Quadtree, 38) => Some(Command::Descend(Quadrant::BottomLeft)),
                     (NavigationMode::Quadtree, 40) => Some(Command::Descend(Quadrant::BottomRight)),
                     (NavigationMode::Grid, 4) => Some(Command::Move(Direction::Left)),
                     (NavigationMode::Grid, 38) => Some(Command::Move(Direction::Down)),
                     (NavigationMode::Grid, 40) => Some(Command::Move(Direction::Up)),
                     (NavigationMode::Grid, 37) => Some(Command::Move(Direction::Right)),
-                    (NavigationMode::Grid, 32) => Some(Command::ResizeGrid { refine: false }),
-                    (NavigationMode::Grid, 34) => Some(Command::ResizeGrid { refine: true }),
                     _ => None,
                 },
             }
@@ -212,12 +229,53 @@ impl KeyRouter {
 mod tests {
     use super::*;
     #[test]
+    fn default_mode_hints_and_removed_controls() {
+        let mut router = KeyRouter::default();
+        assert_eq!(router.mode(), NavigationMode::Grid);
+        assert!(!router.show_hints());
+        let plain = Modifiers::default();
+        router.activate();
+        assert_eq!(
+            router.press(17, plain, false),
+            (true, Some(Command::ShowHints(true)))
+        );
+        assert!(router.show_hints());
+        assert_eq!(router.press(17, plain, true), (true, None));
+        // A dismissal may cancel deferred rendering but not the preference.
+        assert_eq!(
+            router.press(0, plain, false),
+            (true, Some(Command::Dismiss))
+        );
+        assert!(router.show_hints());
+        assert!(router.release(0));
+        assert!(router.release(17));
+        router.activate();
+        assert_eq!(
+            router.press(17, plain, false),
+            (true, Some(Command::ShowHints(false)))
+        );
+        assert!(router.release(17));
+        for mode in [NavigationMode::Quadtree, NavigationMode::Grid] {
+            router.set_mode(mode);
+            for code in [32, 34] {
+                router.activate();
+                assert_eq!(
+                    router.press(code, plain, false),
+                    (true, Some(Command::Dismiss))
+                );
+                assert!(router.release(code));
+            }
+        }
+    }
+
+    #[test]
     fn cluster_modifiers_and_repeat_policy() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         router.activate();
         for (code, quadrant) in [
-            (32, Quadrant::TopLeft),
-            (34, Quadrant::TopRight),
+            (4, Quadrant::TopLeft),
+            (37, Quadrant::TopRight),
             (38, Quadrant::BottomLeft),
             (40, Quadrant::BottomRight),
         ] {
@@ -297,6 +355,7 @@ mod tests {
     #[test]
     fn mode_switch_routes_immediately_and_preserves_key_ownership() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         router.activate();
         assert_eq!(
             router.press(46, Modifiers::default(), false),
@@ -313,8 +372,6 @@ mod tests {
             (38, Command::Move(Direction::Down)),
             (40, Command::Move(Direction::Up)),
             (37, Command::Move(Direction::Right)),
-            (32, Command::ResizeGrid { refine: false }),
-            (34, Command::ResizeGrid { refine: true }),
         ] {
             assert_eq!(
                 router.press(code, Modifiers::default(), false),
@@ -324,6 +381,18 @@ mod tests {
                 router.press(code, Modifiers::default(), true),
                 (true, Some(command))
             );
+            assert!(router.release(code));
+        }
+        let shifted = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        for (code, refine) in [(38, false), (40, true)] {
+            let command = Command::ResizeGrid { refine };
+            assert_eq!(router.press(code, shifted, false), (true, Some(command)));
+            assert_eq!(router.press(code, shifted, true), (true, Some(command)));
+            // Releasing Shift cannot turn a held density key into movement.
+            assert_eq!(router.press(code, Modifiers::default(), true), (true, None));
             assert!(router.release(code));
         }
         // Grid back is a no-op, but its full physical press remains owned.
@@ -345,10 +414,10 @@ mod tests {
         );
         assert!(router.release(46));
         assert_eq!(
-            router.press(4, Modifiers::default(), false),
+            router.press(32, Modifiers::default(), false),
             (true, Some(Command::Dismiss))
         );
-        assert!(router.release(4));
+        assert!(router.release(32));
         router.activate();
         assert_eq!(
             router.press(40, Modifiers::default(), false),
@@ -384,6 +453,7 @@ mod tests {
     #[test]
     fn held_navigation_cannot_cross_modes_modifiers_or_sessions() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         let plain = Modifiers::default();
         let shifted = Modifiers {
             shift: true,
@@ -422,7 +492,7 @@ mod tests {
         assert_eq!(router.press(4, plain, true), (true, None));
         assert!(router.release(4));
 
-        for code in [4, 32] {
+        for code in [4, 37] {
             assert!(router.press(code, plain, false).1.is_some());
             router.deactivate();
             assert_eq!(router.press(code, plain, true), (true, None));
@@ -459,6 +529,7 @@ mod tests {
     #[test]
     fn click_reset_and_display_switches_never_repeat_in_either_mode() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         let plain = Modifiers::default();
         let shifted = Modifiers {
             shift: true,
@@ -489,6 +560,7 @@ mod tests {
     #[test]
     fn escape_and_changed_modifiers_keep_paired_releases_owned() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         router.activate();
         assert!(router.press(36, Modifiers::default(), false).0);
         assert_eq!(
@@ -524,6 +596,7 @@ mod tests {
     #[test]
     fn activation_aliases_toggle_and_own_full_presses() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         assert_eq!(
             router.press(160, Modifiers::default(), false),
             (true, Some(Command::Activate))
@@ -615,6 +688,7 @@ mod tests {
     #[test]
     fn dismissal_keys_are_silent_and_preserve_existing_target_presses() {
         let mut router = KeyRouter::default();
+        router.set_mode(NavigationMode::Quadtree);
         assert_eq!(router.press(32, Modifiers::default(), false), (false, None));
         router.activate();
         assert_eq!(

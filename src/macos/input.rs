@@ -46,6 +46,12 @@ impl Dispatch {
     pub fn mode(&self) -> NavigationMode {
         self.router.borrow().mode()
     }
+    pub fn show_hints(&self) -> bool {
+        self.router.borrow().show_hints()
+    }
+    pub fn set_show_hints(&self, show: bool) {
+        self.router.borrow_mut().set_show_hints(show);
+    }
     pub fn set_mode(&self, mode: NavigationMode) {
         self.router.borrow_mut().set_mode(mode);
     }

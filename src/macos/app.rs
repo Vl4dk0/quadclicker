@@ -22,7 +22,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 // Stable strings allow future releases to change enum layout without losing the
-// preference. Unknown or absent values retain the original quadtree default.
+// preference. Unknown or absent values use the new-user grid default.
 fn load_mode() -> NavigationMode {
     match NSUserDefaults::standardUserDefaults()
         .stringForKey(ns_string!("navigationMode"))
@@ -30,8 +30,8 @@ fn load_mode() -> NavigationMode {
         .map(|value| value.to_string())
         .as_deref()
     {
-        Some("grid") => NavigationMode::Grid,
-        _ => NavigationMode::Quadtree,
+        Some("quadtree") => NavigationMode::Quadtree,
+        _ => NavigationMode::Grid,
     }
 }
 
@@ -49,6 +49,31 @@ fn save_mode(mode: NavigationMode) {
         // SAFETY: NSString is a supported property-list value, and both objects
         // remain valid throughout the synchronous defaults setter.
         unsafe { defaults.setObject_forKey(Some(value), ns_string!("navigationMode")) };
+    }
+}
+
+fn load_hints() -> bool {
+    NSUserDefaults::standardUserDefaults()
+        .stringForKey(ns_string!("destinationHints"))
+        .as_deref()
+        == Some(ns_string!("shown"))
+}
+
+fn save_hints(show: bool) {
+    let value = if show {
+        ns_string!("shown")
+    } else {
+        ns_string!("hidden")
+    };
+    let defaults = NSUserDefaults::standardUserDefaults();
+    if defaults
+        .stringForKey(ns_string!("destinationHints"))
+        .as_deref()
+        != Some(value)
+    {
+        // SAFETY: Both key and value are valid property-list strings and live
+        // throughout the synchronous setter.
+        unsafe { defaults.setObject_forKey(Some(value), ns_string!("destinationHints")) };
     }
 }
 
@@ -83,6 +108,7 @@ impl Controller {
             presenting: Cell::new(false),
         });
         controller.dispatch.set_mode(load_mode());
+        controller.dispatch.set_show_hints(load_hints());
         controller
     }
     fn launch(self: &Rc<Self>) {
@@ -126,7 +152,11 @@ impl Controller {
     fn start_session(&self) -> Result<()> {
         let display = Display::under_pointer(self.mtm)?;
         let navigation = Navigation::new_in_mode(display.local_bounds()?, self.dispatch.mode());
-        let overlay = Overlay::new(self.mtm, display, navigation.overlay_state());
+        let overlay = Overlay::new(
+            self.mtm,
+            display,
+            navigation.overlay_state(self.dispatch.show_hints()),
+        );
         if self.tap.borrow().is_none() {
             let tap = EventTap::new(self.dispatch.clone())?;
             *self.tap.borrow_mut() = Some(tap);
@@ -147,6 +177,7 @@ impl Controller {
         // The router changes mode synchronously, including a toggle followed by
         // dismissal before its deferred rendering command can run.
         save_mode(self.dispatch.mode());
+        save_hints(self.dispatch.show_hints());
         self.dispatch.stop();
         // Drop after releasing the borrow: ordering a native window out can
         // deliver AppKit notifications synchronously.
@@ -212,9 +243,10 @@ impl Controller {
                 if display != session.display {
                     session.navigation.rebase(display.local_bounds()?);
                     session.display = display;
-                    session
-                        .overlay
-                        .move_to(display, session.navigation.overlay_state());
+                    session.overlay.move_to(
+                        display,
+                        session.navigation.overlay_state(self.dispatch.show_hints()),
+                    );
                 }
                 return Ok(());
             }
@@ -225,6 +257,7 @@ impl Controller {
                 session.navigation.switch_mode(mode);
                 save_mode(mode);
             }
+            Command::ShowHints(show) => save_hints(show),
             Command::Back => session.navigation.back(),
             Command::Reset => session.navigation.reset(),
             Command::Click => {
@@ -236,7 +269,9 @@ impl Controller {
             }
             Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
         }
-        session.overlay.update(session.navigation.overlay_state());
+        session
+            .overlay
+            .update(session.navigation.overlay_state(self.dispatch.show_hints()));
         Ok(())
     }
     fn show_permission_help(&self) {

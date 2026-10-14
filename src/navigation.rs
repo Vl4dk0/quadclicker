@@ -5,8 +5,8 @@ const MAX_GRID_DIVISIONS: u16 = 512;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NavigationMode {
-    #[default]
     Quadtree,
+    #[default]
     Grid,
 }
 
@@ -24,6 +24,13 @@ pub struct OverlayState {
     pub root: Rect,
     pub mode: NavigationMode,
     pub grid_divisions: Option<u16>,
+    pub destination_hints: [Option<DestinationHint>; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DestinationHint {
+    pub key: char,
+    pub point: Point,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -157,6 +164,7 @@ struct GridState {
     row: u16,
 }
 
+#[derive(Clone)]
 struct GridSelection {
     root: Rect,
     state: GridState,
@@ -275,14 +283,61 @@ impl Navigation {
         }
     }
 
-    pub fn overlay_state(&self) -> OverlayState {
+    pub fn overlay_state(&self, show_hints: bool) -> OverlayState {
         OverlayState {
             selection: self.current(),
             root: self.root,
             mode: self.mode,
             grid_divisions: (self.mode == NavigationMode::Grid)
                 .then_some(self.grid.state.divisions),
+            destination_hints: if show_hints {
+                self.destination_hints()
+            } else {
+                [None; 4]
+            },
         }
+    }
+
+    /// Preview the same geometric transitions navigation uses, without changing
+    /// the selection. Boundary no-ops have no useful destination to label.
+    fn destination_hints(&self) -> [Option<DestinationHint>; 4] {
+        let keys = ['h', 'j', 'k', 'l'];
+        std::array::from_fn(|index| {
+            let destination = match self.mode {
+                NavigationMode::Quadtree => {
+                    if self.quadtree.parents.len() >= MAX_DEPTH {
+                        return None;
+                    }
+                    let quadrant = [
+                        Quadrant::TopLeft,
+                        Quadrant::BottomLeft,
+                        Quadrant::BottomRight,
+                        Quadrant::TopRight,
+                    ][index];
+                    self.quadtree.current().quarter(quadrant)?
+                }
+                NavigationMode::Grid => {
+                    let mut preview = self.grid.clone();
+                    preview.move_cell(
+                        [
+                            Direction::Left,
+                            Direction::Down,
+                            Direction::Up,
+                            Direction::Right,
+                        ][index],
+                    );
+                    let destination = preview.current();
+                    if destination == self.current() {
+                        return None;
+                    }
+                    destination
+                }
+            };
+            Some(DestinationHint {
+                key: keys[index],
+                point: destination.midpoint(),
+            })
+        })
     }
 
     pub fn switch_mode(&mut self, mode: NavigationMode) {
@@ -363,6 +418,81 @@ pub fn event_point(local: Point, local_size: (f64, f64), quartz: Rect) -> Point 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn destination_hints_match_navigation_without_mutating_selection() {
+        let Some(root) = Rect::new(-120.0, 30.0, 4096.0, 2048.0) else {
+            panic!("valid fixture")
+        };
+        for mode in [NavigationMode::Quadtree, NavigationMode::Grid] {
+            let mut navigation = Navigation::new_in_mode(root, mode);
+            let before = navigation.current();
+            assert_eq!(navigation.overlay_state(false).destination_hints, [None; 4]);
+            let hints = navigation.overlay_state(true).destination_hints;
+            assert_eq!(navigation.current(), before);
+            for (index, hint) in hints.iter().enumerate() {
+                let mut preview = Navigation::new_in_mode(root, mode);
+                match mode {
+                    NavigationMode::Quadtree => preview.descend(
+                        [
+                            Quadrant::TopLeft,
+                            Quadrant::BottomLeft,
+                            Quadrant::BottomRight,
+                            Quadrant::TopRight,
+                        ][index],
+                    ),
+                    NavigationMode::Grid => preview.move_cell(
+                        [
+                            Direction::Left,
+                            Direction::Down,
+                            Direction::Up,
+                            Direction::Right,
+                        ][index],
+                    ),
+                }
+                assert_eq!(
+                    *hint,
+                    (preview.current() != before).then_some(DestinationHint {
+                        key: ['h', 'j', 'k', 'l'][index],
+                        point: preview.current().midpoint(),
+                    })
+                );
+            }
+            match mode {
+                NavigationMode::Quadtree => {
+                    for _ in 0..MAX_DEPTH {
+                        navigation.descend(Quadrant::TopLeft);
+                    }
+                    assert_eq!(navigation.overlay_state(true).destination_hints, [None; 4]);
+                }
+                NavigationMode::Grid => {
+                    navigation.resize_grid(false);
+                    assert_eq!(navigation.overlay_state(true).destination_hints, [None; 4]);
+                    navigation.resize_grid(true);
+                    let Some(destination) = Rect::new(0.0, 0.0, 8192.0, 4096.0) else {
+                        panic!("valid fixture")
+                    };
+                    navigation.rebase(destination);
+                    for hint in navigation
+                        .overlay_state(true)
+                        .destination_hints
+                        .into_iter()
+                        .flatten()
+                    {
+                        assert!(destination.contains(hint.point));
+                        assert_ne!(hint.point, navigation.current().midpoint());
+                    }
+                }
+            }
+        }
+        let Some(tiny) = Rect::new(0.0, 0.0, 1.0, 1.0) else {
+            panic!("valid fixture")
+        };
+        assert_eq!(
+            Navigation::new(tiny).overlay_state(true).destination_hints,
+            [None; 4]
+        );
+    }
+
     #[test]
     fn path_parent_reset_and_click_midpoint() {
         let Some(root) = Rect::new(0.0, 0.0, 800.0, 600.0) else {
@@ -501,18 +631,18 @@ mod tests {
             previous.resize_grid(true);
         }
         previous.move_cell(Direction::Up);
-        assert_eq!(previous.overlay_state().grid_divisions, Some(32));
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state().mode);
-        assert_eq!(reopened.overlay_state().mode, NavigationMode::Grid);
-        assert_eq!(reopened.overlay_state().grid_divisions, Some(2));
+        assert_eq!(previous.overlay_state(false).grid_divisions, Some(32));
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false).mode);
+        assert_eq!(reopened.overlay_state(false).mode, NavigationMode::Grid);
+        assert_eq!(reopened.overlay_state(false).grid_divisions, Some(2));
         assert!(reopened.current().contains(root.midpoint()));
 
         previous.switch_mode(NavigationMode::Quadtree);
         previous.descend(Quadrant::TopLeft);
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state().mode);
-        assert_eq!(reopened.overlay_state().mode, NavigationMode::Quadtree);
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false).mode);
+        assert_eq!(reopened.overlay_state(false).mode, NavigationMode::Quadtree);
         assert_eq!(reopened.current(), root);
-        assert_eq!(reopened.overlay_state().grid_divisions, None);
+        assert_eq!(reopened.overlay_state(false).grid_divisions, None);
     }
 
     #[test]
@@ -549,7 +679,7 @@ mod tests {
         };
         let mut navigation = Navigation::new(root);
         navigation.switch_mode(NavigationMode::Grid);
-        assert_eq!(navigation.overlay_state().grid_divisions, Some(2));
+        assert_eq!(navigation.overlay_state(false).grid_divisions, Some(2));
         navigation.move_cell(Direction::Left);
         navigation.move_cell(Direction::Up);
         let grid = navigation.current();
