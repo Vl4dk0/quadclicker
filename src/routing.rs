@@ -7,6 +7,8 @@ pub enum Command {
     Move(Direction),
     ResizeGrid { refine: bool },
     SwitchMode(NavigationMode),
+    PreviousDisplay,
+    NextDisplay,
     Back,
     Reset,
     Click,
@@ -15,17 +17,23 @@ pub enum Command {
     Activate,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
     pub shortcut: bool,
     pub function: bool,
 }
 
+#[derive(Clone, Copy)]
+struct OwnedPress {
+    modifiers: Modifiers,
+    repeat_action: Option<Command>,
+}
+
 pub struct KeyRouter {
     active: bool,
     mode: NavigationMode,
-    held: [bool; 256],
+    held: [Option<OwnedPress>; 256],
 }
 
 impl Default for KeyRouter {
@@ -33,39 +41,47 @@ impl Default for KeyRouter {
         Self {
             active: false,
             mode: NavigationMode::Quadtree,
-            held: [false; 256],
+            held: [None; 256],
         }
     }
 }
 
 impl KeyRouter {
     pub fn activate(&mut self) {
+        self.cancel_repeats();
         self.active = true;
         self.mode = NavigationMode::Quadtree;
     }
     pub fn deactivate(&mut self) {
+        self.cancel_repeats();
         self.active = false;
     }
     pub fn interception_lost(&mut self) {
         // A disabled tap cannot observe releases. Its replacement must not
         // inherit presses whose corresponding release may already be gone.
         self.active = false;
-        self.held.fill(false);
+        self.held.fill(None);
     }
     pub fn is_active(&self) -> bool {
         self.active
     }
     #[cfg(test)]
     pub fn is_drained(&self) -> bool {
-        !self.held.iter().any(|held| *held)
+        !self.held.iter().any(Option::is_some)
     }
     pub fn release(&mut self, code: usize) -> bool {
         let Some(held) = self.held.get_mut(code) else {
             return false;
         };
-        std::mem::replace(held, false)
+        held.take().is_some()
+    }
+    fn cancel_repeats(&mut self) {
+        for press in self.held.iter_mut().flatten() {
+            press.repeat_action = None;
+        }
     }
     pub fn modifier_changed(&mut self, code: usize, pressed: bool) -> Option<Command> {
+        self.cancel_repeats();
         // Fn stays available as an activation-chord prefix, just as Shift stays
         // available for reset. Modifiers pass through to preserve target state.
         if !self.active || !pressed || matches!(code, 56 | 60 | 63) {
@@ -77,7 +93,7 @@ impl KeyRouter {
 
     fn toggle(&mut self) -> Command {
         if self.active {
-            self.active = false;
+            self.deactivate();
             Command::Exit
         } else {
             Command::Activate
@@ -93,12 +109,20 @@ impl KeyRouter {
         let Some(held) = self.held.get_mut(code) else {
             return (false, None);
         };
-        if *held {
-            return (true, None);
+        if let Some(press) = held {
+            // Ownership lasts through key-up, but the original action can only
+            // repeat within its uninterrupted mode, session and modifiers.
+            if modifiers != press.modifiers || !self.active {
+                press.repeat_action = None;
+            }
+            return (true, if repeat { press.repeat_action } else { None });
         }
         let activation_key = code == 160 || (code == 49 && modifiers.function);
         if activation_key && !modifiers.shortcut && !modifiers.shift && !repeat {
-            *held = true;
+            *held = Some(OwnedPress {
+                modifiers,
+                repeat_action: None,
+            });
             return (true, Some(self.toggle()));
         }
         if !self.active {
@@ -107,7 +131,7 @@ impl KeyRouter {
         if repeat {
             // A press that began outside QuadClicker still belongs to the target
             // app. Its repeats dismiss navigation instead of becoming commands.
-            self.active = false;
+            self.deactivate();
             return (false, Some(Command::Dismiss));
         }
         // Native keypad Enter (76) can carry Function metadata; it remains an
@@ -121,12 +145,15 @@ impl KeyRouter {
                 46 if !modifiers.shift => {
                     // Commands drain later. Update routing now so the next key
                     // already uses the mode requested by this physical press.
+                    self.cancel_repeats();
                     self.mode = match self.mode {
                         NavigationMode::Quadtree => NavigationMode::Grid,
                         NavigationMode::Grid => NavigationMode::Quadtree,
                     };
                     Some(Command::SwitchMode(self.mode))
                 }
+                4 if modifiers.shift => Some(Command::PreviousDisplay),
+                37 if modifiers.shift => Some(Command::NextDisplay),
                 31 | 51 if modifiers.shift => Some(Command::Reset),
                 31 | 51 => Some(Command::Back),
                 36 | 76 if !modifiers.shift => Some(Command::Click),
@@ -147,15 +174,25 @@ impl KeyRouter {
             }
         };
         if let Some(command) = command {
-            *held = true;
+            let repeat_action = match command {
+                Command::Descend(_) | Command::Move(_) | Command::ResizeGrid { .. } => {
+                    Some(command)
+                }
+                Command::Back if self.mode == NavigationMode::Quadtree => Some(command),
+                _ => None,
+            };
+            self.held[code] = Some(OwnedPress {
+                modifiers,
+                repeat_action,
+            });
             if command == Command::Exit {
-                self.active = false;
+                self.deactivate();
             }
             (true, Some(command))
         } else {
             // Preserve the original key event. Only navigation commands acquire
             // key ownership; ordinary typing and shortcuts return to the target.
-            self.active = false;
+            self.deactivate();
             (false, Some(Command::Dismiss))
         }
     }
@@ -165,7 +202,7 @@ impl KeyRouter {
 mod tests {
     use super::*;
     #[test]
-    fn cluster_modifiers_and_single_press_policy() {
+    fn cluster_modifiers_and_repeat_policy() {
         let mut router = KeyRouter::default();
         router.activate();
         for (code, quadrant) in [
@@ -178,7 +215,10 @@ mod tests {
                 router.press(code, Modifiers::default(), false),
                 (true, Some(Command::Descend(quadrant)))
             );
-            assert_eq!(router.press(code, Modifiers::default(), true), (true, None));
+            assert_eq!(
+                router.press(code, Modifiers::default(), true),
+                (true, Some(Command::Descend(quadrant)))
+            );
             assert!(router.release(code));
         }
         for code in [31, 51] {
@@ -189,7 +229,10 @@ mod tests {
                 };
                 assert_eq!(router.press(code, modifiers, false), (true, Some(command)));
                 assert!(router.is_active());
-                assert_eq!(router.press(code, modifiers, true), (true, None));
+                assert_eq!(
+                    router.press(code, modifiers, true),
+                    (true, if shift { None } else { Some(Command::Back) })
+                );
                 assert!(router.release(code));
             }
         }
@@ -267,6 +310,10 @@ mod tests {
                 router.press(code, Modifiers::default(), false),
                 (true, Some(command))
             );
+            assert_eq!(
+                router.press(code, Modifiers::default(), true),
+                (true, Some(command))
+            );
             assert!(router.release(code));
         }
         // Grid back is a no-op, but its full physical press remains owned.
@@ -307,8 +354,113 @@ mod tests {
                 },
                 false
             ),
+            (true, Some(Command::PreviousDisplay))
+        );
+        assert!(router.release(4));
+    }
+
+    #[test]
+    fn held_navigation_cannot_cross_modes_modifiers_or_sessions() {
+        let mut router = KeyRouter::default();
+        let plain = Modifiers::default();
+        let shifted = Modifiers {
+            shift: true,
+            ..plain
+        };
+        router.activate();
+        assert_eq!(
+            router.press(38, plain, false),
+            (true, Some(Command::Descend(Quadrant::BottomLeft)))
+        );
+        assert!(router.press(38, plain, true).1.is_some());
+        assert_eq!(
+            router.press(46, plain, false),
+            (true, Some(Command::SwitchMode(NavigationMode::Grid)))
+        );
+        assert_eq!(router.press(38, plain, true), (true, None));
+        assert!(router.release(38));
+        assert!(router.release(46));
+        assert_eq!(
+            router.press(38, plain, false),
+            (true, Some(Command::Move(Direction::Down)))
+        );
+        assert_eq!(
+            router.press(38, plain, true),
+            (true, Some(Command::Move(Direction::Down)))
+        );
+        assert_eq!(router.press(38, shifted, true), (true, None));
+        assert_eq!(router.press(38, plain, true), (true, None));
+        assert!(router.release(38));
+        assert_eq!(
+            router.press(4, plain, false),
+            (true, Some(Command::Move(Direction::Left)))
+        );
+        assert_eq!(router.modifier_changed(56, true), None);
+        assert_eq!(router.modifier_changed(56, false), None);
+        assert_eq!(router.press(4, plain, true), (true, None));
+        assert!(router.release(4));
+
+        for code in [4, 32] {
+            assert!(router.press(code, plain, false).1.is_some());
+            router.deactivate();
+            assert_eq!(router.press(code, plain, true), (true, None));
+            router.activate();
+            assert_eq!(router.press(code, plain, true), (true, None));
+            assert!(router.release(code));
+            assert_eq!(
+                router.press(46, plain, false),
+                (true, Some(Command::SwitchMode(NavigationMode::Grid)))
+            );
+            assert!(router.release(46));
+        }
+        // A key held in another app never becomes ours merely by activating.
+        router.deactivate();
+        assert_eq!(router.press(40, plain, false), (false, None));
+        router.activate();
+        assert_eq!(
+            router.press(40, plain, true),
             (false, Some(Command::Dismiss))
         );
+        assert!(!router.release(40));
+        router.activate();
+        assert!(router.press(32, plain, false).0);
+        router.interception_lost();
+        router.activate();
+        assert_eq!(
+            router.press(32, plain, true),
+            (false, Some(Command::Dismiss))
+        );
+        assert!(router.is_drained());
+    }
+
+    #[test]
+    fn click_reset_and_display_switches_never_repeat_in_either_mode() {
+        let mut router = KeyRouter::default();
+        let plain = Modifiers::default();
+        let shifted = Modifiers {
+            shift: true,
+            ..plain
+        };
+        router.activate();
+        for mode in [NavigationMode::Quadtree, NavigationMode::Grid] {
+            assert_eq!(router.mode, mode);
+            for (code, modifiers, command) in [
+                (36, plain, Command::Click),
+                (76, plain, Command::Click),
+                (31, shifted, Command::Reset),
+                (51, shifted, Command::Reset),
+                (4, shifted, Command::PreviousDisplay),
+                (37, shifted, Command::NextDisplay),
+            ] {
+                assert_eq!(router.press(code, modifiers, false), (true, Some(command)));
+                assert_eq!(router.press(code, modifiers, true), (true, None));
+                assert_eq!(router.press(code, plain, true), (true, None));
+                assert!(router.release(code));
+            }
+            assert!(router.press(46, plain, false).0);
+            assert_eq!(router.press(46, plain, true), (true, None));
+            assert!(router.release(46));
+        }
     }
 
     #[test]
