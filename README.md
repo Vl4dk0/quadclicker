@@ -4,7 +4,7 @@ A native macOS menu bar app that selects a point by repeatedly dividing the scre
 
 ## Build and run
 
-Requires macOS 13 or newer and a Rust toolchain. From this directory:
+Requires macOS 13 or newer, a Rust toolchain, and this Mac's configured Apple Development signing identity. From this directory:
 
 ```sh
 ./scripts/build-app.sh
@@ -12,13 +12,13 @@ ditto dist/QuadClicker.app /Applications/QuadClicker.app
 open /Applications/QuadClicker.app
 ```
 
-The build produces a locally signed app at `dist/QuadClicker.app`; the next command installs it in `/Applications`. Run that installed copy for a consistent app identity. Quit QuadClicker before installing an updated build. Ad-hoc signing may require granting permission again after rebuilding.
+The build produces a signed app at `dist/QuadClicker.app`; the next command installs it in `/Applications`. Run that installed copy for a consistent app identity. Quit QuadClicker before installing an updated build. The script uses this Mac's existing Apple Development certificate and fails if it is unavailable; it does not fall back to ad-hoc signing.
 
 ## Accessibility permission
 
 Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, choose **QC → Quit** and reopen it.
 
-No Screen Recording permission is needed. After rebuilding, if macOS stops recognizing the permission, remove the app from the Accessibility list, add the newly built app, and reopen it.
+No Screen Recording permission is needed. Switching from an earlier ad-hoc build to the certificate-signed app requires granting permission again once. If macOS no longer recognizes the permission, remove the stale QuadClicker entry, add `/Applications/QuadClicker.app`, and reopen it.
 
 ## Navigation
 

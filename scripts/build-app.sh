@@ -3,9 +3,16 @@ set -euo pipefail
 
 project_dir="${0:A:h:h}"
 destination="$project_dir/dist/QuadClicker.app"
+signing_identity='29DAC27BEFE42942098F6B2649091EEF5D89DD07'
 
 if [[ "$(uname -s)" != Darwin ]]; then
     print -u2 'QuadClicker requires macOS.'
+    exit 1
+fi
+
+# Keep macOS permissions tied to this certificate and bundle ID across updates.
+if ! /usr/bin/security find-identity -v -p codesigning | /usr/bin/grep -q "$signing_identity"; then
+    print -u2 'The QuadClicker Apple Development signing identity is unavailable in this Mac’s keychain.'
     exit 1
 fi
 
@@ -22,7 +29,7 @@ mkdir -p "$bundle/Contents/MacOS"
 cp "$project_dir/packaging/Info.plist" "$bundle/Contents/Info.plist"
 cp "$project_dir/target/release/quadclicker" "$bundle/Contents/MacOS/quadclicker"
 chmod 755 "$bundle/Contents/MacOS/quadclicker"
-/usr/bin/codesign --sign - "$bundle"
+/usr/bin/codesign --sign "$signing_identity" "$bundle"
 /usr/bin/codesign --verify --strict "$bundle"
 
 if [[ -e "$destination" ]]; then
