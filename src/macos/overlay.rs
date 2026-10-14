@@ -28,12 +28,62 @@ define_class!(
             NSRectFillUsingOperation(dirty, NSCompositingOperation::Copy);
             let state = self.ivars().get();
             draw_grid(state);
+            draw_destination_hints(state);
             draw_mode_badge(state);
             // The selected target stays visible even inside the mode badge.
             draw_selection(state.selection);
         }
     }
 );
+
+// Keep each letter centered on the exact future target. At dense resolutions,
+// hide the hints rather than displacing them or covering the current click dot.
+fn draw_destination_hints(state: OverlayState) {
+    let spacing = match state.mode {
+        NavigationMode::Quadtree => state.selection.width.min(state.selection.height) / 2.0,
+        NavigationMode::Grid => state.selection.width.min(state.selection.height),
+    };
+    if spacing < 28.0 || state.destination_hints.iter().all(Option::is_none) {
+        return;
+    }
+    let font = NSFont::systemFontOfSize(12.0);
+    let color = NSColor::whiteColor();
+    // SAFETY: These immutable attribute constants accept NSFont and NSColor.
+    let attributes = unsafe {
+        NSDictionary::from_slices(
+            &[NSFontAttributeName, NSForegroundColorAttributeName],
+            &[&*font as &AnyObject, &*color as &AnyObject],
+        )
+    };
+    for hint in state.destination_hints.into_iter().flatten() {
+        let text = NSString::from_str(&hint.key.to_string());
+        // SAFETY: The dictionary contains valid NSString drawing attributes.
+        let size = unsafe { text.sizeWithAttributes(Some(&attributes)) };
+        let bounds = NSRect::new(
+            NSPoint::new(
+                hint.point.x - (size.width + 10.0) / 2.0,
+                hint.point.y - (size.height + 6.0) / 2.0,
+            ),
+            NSSize::new(size.width + 10.0, size.height + 6.0),
+        );
+        let background = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bounds, 4.0, 4.0);
+        NSColor::colorWithSRGBRed_green_blue_alpha(0.08, 0.08, 0.09, 0.85).setFill();
+        background.fill();
+        NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.4).setStroke();
+        background.setLineWidth(0.5);
+        background.stroke();
+        // SAFETY: drawRect supplies the context; attributes contain valid types.
+        unsafe {
+            text.drawAtPoint_withAttributes(
+                NSPoint::new(
+                    hint.point.x - size.width / 2.0,
+                    hint.point.y - size.height / 2.0,
+                ),
+                Some(&attributes),
+            )
+        };
+    }
+}
 
 // Dense grids would obscure the application underneath. Keep the exact selected
 // cell and density badge visible while suppressing unreadable context lines.
