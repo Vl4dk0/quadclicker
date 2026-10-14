@@ -22,8 +22,9 @@ The overlay shows only the selected rectangle and its midpoint dot. Use a contra
 | Shift+Backspace | Return to root |
 | Return or keypad Enter | Single left click at midpoint; keep selection and overlay |
 | Escape | Hide overlay |
+| Other key or unsupported shortcut | Hide overlay and pass the original event to the underlying app |
 
-Use physical U/I/J/K key positions for a predictable navigation cluster; document this. Ignore Caps Lock for commands. Allow Shift on quadrant keys; only unmodified Enter clicks. Command/Control/Option combinations pass through, except Escape always exits. Unrecognized keys pass through. Ignore autorepeat for all navigation commands: one physical press performs one action.
+Use physical U/I/J/K key positions for a predictable navigation cluster; document this. Ignore Caps Lock for commands. Allow Shift on quadrant keys; only unmodified Enter clicks. Command/Control/Option combinations dismiss the overlay and pass through, except Escape always exits and is consumed. Unrecognized key-down events also dismiss and pass through. Pressing a modifier alone keeps the overlay open. Ignore autorepeat for owned navigation commands: one physical press performs one action. A repeating key whose press began outside the overlay still belongs to the underlying app; its repeat dismisses and passes through.
 
 ## Modules and ownership
 
@@ -37,7 +38,7 @@ Use a single AppKit main thread and its Core Foundation run loop. AppKit objects
 
 The callback context has a stable owned allocation. Its lifetime ends only after the tap is disabled/invalidated and its run-loop source removed. Keep callback work to input classification and a short state transition; release mutable borrows before any AppKit call. Queue actions in order and schedule one pending drain with `CFRunLoopPerformBlock` plus `CFRunLoopWakeUp`, using common modes. The next-turn drain releases queue/policy borrows before applying AppKit updates or posting clicks. Retain only weak controller references so pending work cannot resurrect a terminated app. This avoids a perpetual polling timer and its idle work/fixed latency. Do not display alerts or perform blocking work inside the event callback. Never let a Rust panic unwind across the native callback boundary.
 
-Keep a set of keys whose down event was consumed. Consume their repeats and final up event even if Escape has already hidden the overlay or modifiers changed. Deactivate navigation handling immediately on Escape; continue draining outstanding consumed releases while the tap remains available for Mission Control activation. A fresh activation cannot execute stale queued clicks. Opening the app's own status menu suspends navigation before menu keyboard handling.
+Keep a set of keys whose down event was consumed. Consume their repeats and final up event even if Escape or unrelated typing has already hidden the overlay or modifiers changed. Deactivate navigation handling immediately on Escape or an unrelated key-down; continue draining outstanding consumed releases while the tap remains available for Mission Control activation. An unrelated key never acquires ownership: forward its original event without synthesizing a replacement. Both dismissal paths clear queued actions, including pending clicks; a fresh activation cannot execute stale queued clicks. Opening the app's own status menu suspends navigation before menu keyboard handling.
 
 ## Clicks, focus, and display coordinates
 
