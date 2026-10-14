@@ -116,8 +116,8 @@ impl KeyRouter {
                 34 => Some(Command::Descend(Quadrant::TopRight)),
                 38 => Some(Command::Descend(Quadrant::BottomLeft)),
                 40 => Some(Command::Descend(Quadrant::BottomRight)),
-                51 if modifiers.shift => Some(Command::Reset),
-                51 => Some(Command::Back),
+                4 | 51 if modifiers.shift => Some(Command::Reset),
+                4 | 51 => Some(Command::Back),
                 36 | 76 if !modifiers.shift => Some(Command::Click),
                 _ => None,
             }
@@ -157,6 +157,18 @@ mod tests {
             assert_eq!(router.press(code, Modifiers::default(), true), (true, None));
             assert!(router.release(code));
         }
+        for code in [4, 51] {
+            for (shift, command) in [(false, Command::Back), (true, Command::Reset)] {
+                let modifiers = Modifiers {
+                    shift,
+                    ..Modifiers::default()
+                };
+                assert_eq!(router.press(code, modifiers, false), (true, Some(command)));
+                assert!(router.is_active());
+                assert_eq!(router.press(code, modifiers, true), (true, None));
+                assert!(router.release(code));
+            }
+        }
         assert_eq!(
             router.press(
                 36,
@@ -185,18 +197,25 @@ mod tests {
         );
         assert!(!router.is_active());
         router.activate();
-        assert_eq!(
-            router.press(
-                51,
-                Modifiers {
-                    shift: true,
-                    shortcut: false,
-                    function: false
-                },
-                false
-            ),
-            (true, Some(Command::Reset))
-        );
+        for code in [4, 51] {
+            for shift in [false, true] {
+                router.activate();
+                assert_eq!(
+                    router.press(
+                        code,
+                        Modifiers {
+                            shift,
+                            shortcut: true,
+                            function: false
+                        },
+                        false
+                    ),
+                    (false, Some(Command::Dismiss))
+                );
+                assert!(!router.is_active());
+                assert!(!router.release(code));
+            }
+        }
     }
     #[test]
     fn escape_and_changed_modifiers_keep_paired_releases_owned() {
@@ -356,7 +375,7 @@ mod tests {
             function: true,
             ..Modifiers::default()
         };
-        for code in [32, 34, 38, 40, 51, 36] {
+        for code in [32, 34, 38, 40, 4, 51, 36] {
             router.activate();
             router.modifier_changed(63, true);
             assert_eq!(
