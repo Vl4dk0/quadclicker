@@ -4,7 +4,7 @@ use super::{
     overlay::Overlay,
     permissions, scheduling,
 };
-use crate::navigation::Navigation;
+use crate::navigation::{Navigation, NavigationMode};
 use crate::routing::Command;
 use anyhow::{Context, Result};
 use objc2::rc::Retained;
@@ -15,10 +15,42 @@ use objc2_app_kit::{
     NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSSize, ns_string,
+    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSSize, NSUserDefaults,
+    ns_string,
 };
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
+
+// Stable strings allow future releases to change enum layout without losing the
+// preference. Unknown or absent values retain the original quadtree default.
+fn load_mode() -> NavigationMode {
+    match NSUserDefaults::standardUserDefaults()
+        .stringForKey(ns_string!("navigationMode"))
+        .as_deref()
+        .map(|value| value.to_string())
+        .as_deref()
+    {
+        Some("grid") => NavigationMode::Grid,
+        _ => NavigationMode::Quadtree,
+    }
+}
+
+fn save_mode(mode: NavigationMode) {
+    let value = match mode {
+        NavigationMode::Quadtree => ns_string!("quadtree"),
+        NavigationMode::Grid => ns_string!("grid"),
+    };
+    let defaults = NSUserDefaults::standardUserDefaults();
+    if defaults
+        .stringForKey(ns_string!("navigationMode"))
+        .as_deref()
+        != Some(value)
+    {
+        // SAFETY: NSString is a supported property-list value, and both objects
+        // remain valid throughout the synchronous defaults setter.
+        unsafe { defaults.setObject_forKey(Some(value), ns_string!("navigationMode")) };
+    }
+}
 
 struct Session {
     display: Display,
@@ -40,7 +72,7 @@ pub(super) struct Controller {
 }
 impl Controller {
     fn new(mtm: MainThreadMarker) -> Rc<Self> {
-        Rc::new_cyclic(|weak| Self {
+        let controller = Rc::new_cyclic(|weak| Self {
             mtm,
             dispatch: Dispatch::new(weak.clone()),
             tap: RefCell::new(None),
@@ -49,7 +81,9 @@ impl Controller {
             activation_requested: Cell::new(false),
             shutting_down: Cell::new(false),
             presenting: Cell::new(false),
-        })
+        });
+        controller.dispatch.set_mode(load_mode());
+        controller
     }
     fn launch(self: &Rc<Self>) {
         if permissions::granted() {
@@ -91,7 +125,7 @@ impl Controller {
     }
     fn start_session(&self) -> Result<()> {
         let display = Display::under_pointer(self.mtm)?;
-        let navigation = Navigation::new(display.local_bounds()?);
+        let navigation = Navigation::new_in_mode(display.local_bounds()?, self.dispatch.mode());
         let overlay = Overlay::new(self.mtm, display, navigation.overlay_state());
         if self.tap.borrow().is_none() {
             let tap = EventTap::new(self.dispatch.clone())?;
@@ -110,6 +144,9 @@ impl Controller {
         Ok(())
     }
     fn stop(&self) {
+        // The router changes mode synchronously, including a toggle followed by
+        // dismissal before its deferred rendering command can run.
+        save_mode(self.dispatch.mode());
         self.dispatch.stop();
         // Drop after releasing the borrow: ordering a native window out can
         // deliver AppKit notifications synchronously.
@@ -184,7 +221,10 @@ impl Controller {
             Command::Descend(quadrant) => session.navigation.descend(quadrant),
             Command::Move(direction) => session.navigation.move_cell(direction),
             Command::ResizeGrid { refine } => session.navigation.resize_grid(refine),
-            Command::SwitchMode(mode) => session.navigation.switch_mode(mode),
+            Command::SwitchMode(mode) => {
+                session.navigation.switch_mode(mode);
+                save_mode(mode);
+            }
             Command::Back => session.navigation.back(),
             Command::Reset => session.navigation.reset(),
             Command::Click => {

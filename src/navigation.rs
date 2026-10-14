@@ -172,7 +172,7 @@ impl GridSelection {
                 row: 0,
             },
         };
-        selection.center_on_grid(4);
+        selection.center_on_grid(2);
         selection
     }
 
@@ -259,6 +259,13 @@ impl Navigation {
             quadtree: Selection::new(root),
             grid: GridSelection::new(root),
         }
+    }
+
+    /// A new overlay remembers only its mode, never a previous target or density.
+    pub fn new_in_mode(root: Rect, mode: NavigationMode) -> Self {
+        let mut navigation = Self::new(root);
+        navigation.mode = mode;
+        navigation
     }
 
     pub fn current(&self) -> Rect {
@@ -440,18 +447,18 @@ mod tests {
         assert_eq!(
             navigation.grid.state,
             GridState {
-                divisions: 4,
-                column: 2,
-                row: 2
+                divisions: 2,
+                column: 1,
+                row: 1
             }
         );
         navigation.move_cell(Direction::Up);
         navigation.move_cell(Direction::Left);
-        assert_eq!(navigation.grid.state.row, 1);
-        assert_eq!(navigation.grid.state.column, 1);
+        assert_eq!(navigation.grid.state.row, 0);
+        assert_eq!(navigation.grid.state.column, 0);
         let target = navigation.current().midpoint();
         navigation.resize_grid(true);
-        assert_eq!(navigation.grid.state.divisions, 8);
+        assert_eq!(navigation.grid.state.divisions, 4);
         assert!(navigation.current().contains(target));
         let refined = navigation.current();
         navigation.back();
@@ -482,6 +489,30 @@ mod tests {
         assert_eq!(navigation.current(), root);
         navigation.resize_grid(false);
         assert_eq!(navigation.current(), root);
+    }
+
+    #[test]
+    fn fresh_sessions_restore_mode_without_restoring_navigation() {
+        let Some(root) = Rect::new(0.0, 0.0, 1024.0, 768.0) else {
+            panic!("valid fixture")
+        };
+        let mut previous = Navigation::new_in_mode(root, NavigationMode::Grid);
+        for _ in 0..4 {
+            previous.resize_grid(true);
+        }
+        previous.move_cell(Direction::Up);
+        assert_eq!(previous.overlay_state().grid_divisions, Some(32));
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state().mode);
+        assert_eq!(reopened.overlay_state().mode, NavigationMode::Grid);
+        assert_eq!(reopened.overlay_state().grid_divisions, Some(2));
+        assert!(reopened.current().contains(root.midpoint()));
+
+        previous.switch_mode(NavigationMode::Quadtree);
+        previous.descend(Quadrant::TopLeft);
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state().mode);
+        assert_eq!(reopened.overlay_state().mode, NavigationMode::Quadtree);
+        assert_eq!(reopened.current(), root);
+        assert_eq!(reopened.overlay_state().grid_divisions, None);
     }
 
     #[test]
@@ -518,7 +549,7 @@ mod tests {
         };
         let mut navigation = Navigation::new(root);
         navigation.switch_mode(NavigationMode::Grid);
-        assert_eq!(navigation.overlay_state().grid_divisions, Some(4));
+        assert_eq!(navigation.overlay_state().grid_divisions, Some(2));
         navigation.move_cell(Direction::Left);
         navigation.move_cell(Direction::Up);
         let grid = navigation.current();
@@ -535,7 +566,7 @@ mod tests {
         let target = navigation.current().midpoint();
         navigation.switch_mode(NavigationMode::Quadtree);
         assert!(navigation.current().contains(target));
-        assert_eq!(navigation.quadtree.parents.len(), 3);
+        assert_eq!(navigation.quadtree.parents.len(), 2);
         navigation.reset();
         assert_eq!(navigation.current(), root);
     }
@@ -570,7 +601,7 @@ mod tests {
         let target = navigation.current().midpoint();
         navigation.rebase(root);
         assert_eq!(navigation.mode, NavigationMode::Grid);
-        assert_eq!(navigation.grid.state.divisions, 8);
+        assert_eq!(navigation.grid.state.divisions, 4);
         assert_eq!(
             navigation.current().midpoint(),
             Point {
