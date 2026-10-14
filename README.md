@@ -21,7 +21,9 @@ No Screen Recording permission is needed. After rebuilding, if macOS stops recog
 
 ## Navigation
 
-Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again. Escape hides the overlay; **Quit QuadClicker** exits the app. The keyboard activation shortcut is deferred.
+Opening QuadClicker activates the overlay. Press the standard **F3** key, choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit QuadClicker** exits the app.
+
+On an Apple keyboard with the default function-key behavior, press **Fn+F3**. For F3 alone, open **System Settings → Keyboard → Keyboard Shortcuts → Function Keys** and enable **Use F1, F2, etc. keys as standard function keys**. This changes the whole function-key row. In **Keyboard Shortcuts → Mission Control**, disable or reassign any shortcut using F3 if it conflicts. See [Apple's function-key instructions](https://support.apple.com/en-us/102439). Double Option and Fn+Space activation are deferred.
 
 Each direction selects one quarter of the current rectangle:
 
