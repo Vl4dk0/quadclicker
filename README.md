@@ -24,7 +24,7 @@ No Screen Recording permission is needed. After rebuilding, if macOS stops recog
 
 Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit QuadClicker** exits the app.
 
-Physical Mission Control button activation is implemented and still needs testing on the Mac's hardware; use the menu or reopen the app if that button does not activate it. Keep the keyboard's normal brightness and volume behavior. Double Option and Fn+Space activation are deferred.
+Press the physical Mission Control button to activate QuadClicker. The keyboard's normal brightness and volume behavior stays unchanged. Double Option and Fn+Space activation are deferred.
 
 Each direction selects one quarter of the current rectangle:
 
@@ -32,6 +32,8 @@ Each direction selects one quarter of the current rectangle:
 U: top left       I: top right
 J: bottom left    K: bottom right
 ```
+
+Navigation allows at most nine subdivisions; further quadrant presses leave the rectangle unchanged until you go back or reset.
 
 | Key | Action |
 | --- | --- |
