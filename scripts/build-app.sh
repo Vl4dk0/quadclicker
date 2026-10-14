@@ -36,4 +36,5 @@ if ! mv "$bundle" "$destination"; then
 fi
 
 print "Built $destination"
-print "Launch: open '$destination'"
+print "Install after quitting QuadClicker: ditto '$destination' /Applications/QuadClicker.app"
+print 'Launch: open /Applications/QuadClicker.app'
