@@ -21,6 +21,8 @@ Fn+Space is recognized from the Space event’s SecondaryFn flag, rather than gl
 
 A consumed press owns its down, repeats, and final up. Releasing Fn before Space therefore cannot leak the Space release. A Space press that began outside the shortcut remains owned by the target app; adding Fn during autorepeat cannot activate QuadClicker. Shift and Fn alone remain harmless prefixes while the overlay is active. Other modifier presses dismiss it. Escape always exits; keypad Enter retains native Enter behavior even when it carries Function metadata.
 
+The physical H key aliases Backspace: unmodified presses select the parent rectangle, and Shift selects the root. Both keys share the same modifier and press-ownership policy.
+
 Unrelated keys dismiss navigation immediately and pass the original event through. Dismissal clears pending commands, including clicks. A generation boundary prevents commands from an old activation from executing during a new one. Opening the app’s menu suspends navigation before AppKit handles menu keyboard input.
 
 ## Main thread and native lifetimes
