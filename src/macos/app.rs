@@ -161,12 +161,26 @@ impl Controller {
         let Some(session) = session_slot.as_mut() else {
             return Ok(());
         };
-        if !session.display.unchanged(self.mtm) {
+        let switching_display = matches!(command, Command::PreviousDisplay | Command::NextDisplay);
+        if !switching_display && !session.display.unchanged(self.mtm) {
             anyhow::bail!(
                 "The display configuration changed. Activate again to select the current display."
             );
         }
         match command {
+            Command::PreviousDisplay | Command::NextDisplay => {
+                let display = session
+                    .display
+                    .adjacent(self.mtm, command == Command::NextDisplay)?;
+                if display != session.display {
+                    session.navigation.rebase(display.local_bounds()?);
+                    session.display = display;
+                    session
+                        .overlay
+                        .move_to(display, session.navigation.overlay_state());
+                }
+                return Ok(());
+            }
             Command::Descend(quadrant) => session.navigation.descend(quadrant),
             Command::Move(direction) => session.navigation.move_cell(direction),
             Command::ResizeGrid { refine } => session.navigation.resize_grid(refine),

@@ -131,6 +131,19 @@ impl Selection {
             self.current = parent;
         }
     }
+    fn select_at(&mut self, target: Point, depth: usize) {
+        self.reset();
+        for _ in 0..depth {
+            let center = self.current.midpoint();
+            let quadrant = match (target.x >= center.x, target.y >= center.y) {
+                (false, false) => Quadrant::TopLeft,
+                (true, false) => Quadrant::TopRight,
+                (false, true) => Quadrant::BottomLeft,
+                (true, true) => Quadrant::BottomRight,
+            };
+            self.descend(quadrant);
+        }
+    }
     pub fn reset(&mut self) {
         self.parents.clear();
         self.current = self.root;
@@ -280,20 +293,32 @@ impl Navigation {
                 } else {
                     self.quadtree.parents.len()
                 };
-                self.quadtree.reset();
-                for _ in 0..depth {
-                    let center = self.quadtree.current().midpoint();
-                    let quadrant = match (target.x >= center.x, target.y >= center.y) {
-                        (false, false) => Quadrant::TopLeft,
-                        (true, false) => Quadrant::TopRight,
-                        (false, true) => Quadrant::BottomLeft,
-                        (true, true) => Quadrant::BottomRight,
-                    };
-                    self.quadtree.descend(quadrant);
-                }
+                self.quadtree.select_at(target, depth);
             }
         }
         self.mode = mode;
+    }
+
+    /// Keep each mode's relative target when moving to different display bounds.
+    /// Resolution is reduced only when a cell would become smaller than a point.
+    pub fn rebase(&mut self, root: Rect) {
+        let map = |point: Point| Point {
+            x: root.x + (point.x - self.root.x) / self.root.width * root.width,
+            y: root.y + (point.y - self.root.y) / self.root.height * root.height,
+        };
+        let tree_target = map(self.quadtree.current().midpoint());
+        let grid_target = map(self.grid.current().midpoint());
+        let depth = self.quadtree.parents.len();
+        self.quadtree = Selection::new(root);
+        self.quadtree.select_at(tree_target, depth);
+        self.grid.root = root;
+        while root.width / f64::from(self.grid.state.divisions) < 1.0
+            || root.height / f64::from(self.grid.state.divisions) < 1.0
+        {
+            self.grid.state.divisions /= 2;
+        }
+        self.grid.select_at(grid_target);
+        self.root = root;
     }
 
     pub fn descend(&mut self, quadrant: Quadrant) {
@@ -513,6 +538,56 @@ mod tests {
         assert_eq!(navigation.quadtree.parents.len(), 3);
         navigation.reset();
         assert_eq!(navigation.current(), root);
+    }
+
+    #[test]
+    fn display_transfer_preserves_modes_resolution_and_relative_targets() {
+        let Some(root) = Rect::new(0.0, 0.0, 1024.0, 768.0) else {
+            panic!("valid fixture")
+        };
+        let Some(destination) = Rect::new(0.0, 0.0, 2048.0, 1536.0) else {
+            panic!("valid fixture")
+        };
+        let mut navigation = Navigation::new(root);
+        navigation.descend(Quadrant::TopRight);
+        navigation.descend(Quadrant::BottomLeft);
+        let target = navigation.current().midpoint();
+        navigation.rebase(destination);
+        assert_eq!(navigation.mode, NavigationMode::Quadtree);
+        assert_eq!(navigation.quadtree.parents.len(), 2);
+        assert_eq!(
+            navigation.current().midpoint(),
+            Point {
+                x: target.x * 2.0,
+                y: target.y * 2.0
+            }
+        );
+        navigation.back();
+        assert_eq!(navigation.current().width, 1024.0);
+        navigation.switch_mode(NavigationMode::Grid);
+        navigation.resize_grid(true);
+        navigation.move_cell(Direction::Down);
+        let target = navigation.current().midpoint();
+        navigation.rebase(root);
+        assert_eq!(navigation.mode, NavigationMode::Grid);
+        assert_eq!(navigation.grid.state.divisions, 8);
+        assert_eq!(
+            navigation.current().midpoint(),
+            Point {
+                x: target.x / 2.0,
+                y: target.y / 2.0
+            }
+        );
+        let Some(tiny) = Rect::new(0.0, 0.0, 3.0, 2.0) else {
+            panic!("valid fixture")
+        };
+        navigation.rebase(tiny);
+        assert_eq!(navigation.grid.state.divisions, 2);
+        assert!(navigation.current().width >= 1.0);
+        assert!(navigation.current().height >= 1.0);
+        navigation.switch_mode(NavigationMode::Quadtree);
+        assert!(navigation.current().width >= 1.0);
+        assert!(navigation.current().height >= 1.0);
     }
 
     #[test]

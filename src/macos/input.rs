@@ -66,6 +66,14 @@ impl Dispatch {
         let mut queue = self.queue.borrow_mut();
         if matches!(
             action,
+            Action::Command(Command::PreviousDisplay | Command::NextDisplay)
+        ) {
+            // A target transition cancels old pending clicks, but later actions
+            // remain in FIFO order and belong to the newly selected display.
+            queue.retain(|(_, queued)| !matches!(queued, Action::Command(Command::Click)));
+        }
+        if matches!(
+            action,
             Action::Command(Command::Exit | Command::Dismiss) | Action::Failed(_)
         ) {
             // Exiting, typing, or failure cancels clicks waiting in this run-loop turn.

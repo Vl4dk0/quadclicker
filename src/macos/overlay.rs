@@ -192,6 +192,14 @@ impl Overlay {
     pub fn show(&self) {
         self.panel.orderFrontRegardless();
     }
+    pub fn move_to(&self, display: Display, state: OverlayState) {
+        self.view.ivars().set(state);
+        self.panel.setFrame_display(display.appkit, false);
+        self.view
+            .setFrame(NSRect::new(NSPoint::new(0.0, 0.0), display.appkit.size));
+        self.view.setNeedsDisplay(true);
+        self.panel.orderFrontRegardless();
+    }
     pub fn update(&self, state: OverlayState) {
         self.view.ivars().set(state);
         self.view.setNeedsDisplay(true);
