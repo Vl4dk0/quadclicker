@@ -28,8 +28,9 @@ define_class!(
             NSRectFillUsingOperation(dirty, NSCompositingOperation::Copy);
             let state = self.ivars().get();
             draw_grid(state);
-            draw_selection(state.selection);
             draw_mode_badge(state);
+            // The selected target stays visible even inside the mode badge.
+            draw_selection(state.selection);
         }
     }
 );
