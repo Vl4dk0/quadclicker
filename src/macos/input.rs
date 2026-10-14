@@ -116,7 +116,9 @@ impl EventTap {
             dispatch,
             failed: Cell::new(false),
         });
-        let mask = (1_u64 << CGEventType::KeyDown.0) | (1_u64 << CGEventType::KeyUp.0);
+        let mask = (1_u64 << CGEventType::KeyDown.0)
+            | (1_u64 << CGEventType::KeyUp.0)
+            | (1_u64 << CGEventType::FlagsChanged.0);
         // SAFETY: Box allocation remains stable until tap/source invalidation.
         // Callback runs only on the main loop where this source is installed.
         let port = unsafe { CGEvent::tap_create(CGEventTapLocation::SessionEventTap,
@@ -192,7 +194,20 @@ unsafe extern "C-unwind" fn callback(
             return event.as_ptr();
         };
         let mut router = dispatch.router.borrow_mut();
-        let (consume, command) = if kind == CGEventType::KeyUp {
+        let (consume, command) = if kind == CGEventType::FlagsChanged {
+            let flags = CGEvent::flags(Some(event_ref));
+            let pressed = match code {
+                54 | 55 => flags.contains(CGEventFlags::MaskCommand),
+                58 | 61 => flags.contains(CGEventFlags::MaskAlternate),
+                59 | 62 => flags.contains(CGEventFlags::MaskControl),
+                63 => flags.contains(CGEventFlags::MaskSecondaryFn),
+                // Caps Lock reports its toggle, not a conventional down/up pair.
+                57 => true,
+                56 | 60 => flags.contains(CGEventFlags::MaskShift),
+                _ => false,
+            };
+            (false, router.modifier_changed(code, pressed))
+        } else if kind == CGEventType::KeyUp {
             (router.release(code), None)
         } else if kind == CGEventType::KeyDown {
             let flags = CGEvent::flags(Some(event_ref));

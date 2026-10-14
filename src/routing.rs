@@ -58,6 +58,16 @@ impl KeyRouter {
         };
         std::mem::replace(held, false)
     }
+    pub fn modifier_changed(&mut self, code: usize, pressed: bool) -> Option<Command> {
+        // Shift belongs to navigation (notably Shift+Backspace). Modifier events
+        // themselves always pass through so the target keeps its modifier state.
+        if !self.active || !pressed || matches!(code, 56 | 60) {
+            return None;
+        }
+        self.active = false;
+        Some(Command::Dismiss)
+    }
+
     pub fn press(
         &mut self,
         code: usize,
@@ -249,5 +259,19 @@ mod tests {
         assert!(!router.release(0));
         assert!(router.release(38));
         assert!(!router.release(300));
+
+        for code in [56, 60] {
+            router.activate();
+            assert_eq!(router.modifier_changed(code, true), None);
+            assert_eq!(router.modifier_changed(code, false), None);
+            assert!(router.is_active());
+        }
+        for code in [54, 55, 58, 61, 59, 62, 63, 57] {
+            router.activate();
+            assert_eq!(router.modifier_changed(code, false), None);
+            assert!(router.is_active());
+            assert_eq!(router.modifier_changed(code, true), Some(Command::Dismiss));
+            assert!(!router.is_active());
+        }
     }
 }
