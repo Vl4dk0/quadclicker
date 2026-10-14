@@ -15,7 +15,15 @@ Accessibility permission lets QuadClicker intercept its controls and send mouse 
 
 The Mission Control icon button is often in the F3 position; standard F3 is a different event. Activation has been tested on an Apple Silicon MacBook keyboard. Brightness and volume keys retain their normal behavior.
 
-The overlay starts on the display containing the pointer. It stays out of keyboard focus and lets physical mouse clicks pass through. Navigation uses physical key positions, independent of keyboard layout. Holding a key does not repeat actions. Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size. Shift is allowed on direction keys. Enter clicks without modifiers; native keypad Enter is also supported. Unsupported shortcuts dismiss the overlay and pass through to the app underneath.
+The overlay starts on the display containing the pointer. It stays out of keyboard focus and lets physical mouse clicks pass through. Navigation uses physical key positions, independent of keyboard layout. 
+
+Holding navigation keys repeats using macOS’s keyboard repeat delay and speed: H/J/K/L and U/I in Grid; U/I/J/K, O, and Backspace in Quadtree. Click, mode switch, reset, activation, and display switch act once per press. 
+
+Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size. 
+
+Shift+H and Shift+L switch to the previous or next display in both modes. Displays are ordered left to right, then top to bottom, with wraparound. Switching preserves the mode, grid density or quadtree depth, and the target’s relative position; depth or density is reduced only when needed to keep cells at least one logical point. Other supported Shift direction combinations retain their navigation behavior. 
+
+Enter clicks without modifiers; native keypad Enter is also supported. Unsupported shortcuts dismiss the overlay and pass through to the app underneath.
 
 ## Updates and limitations
 
@@ -49,6 +57,6 @@ To create the Apple Silicon release archive and SHA-256 checksum without install
 ./scripts/package-release.sh
 ```
 
-Artifacts are written to `target/releases/v0.2.1/`.
+Artifacts are written to `target/releases/v0.3.0/`.
 
 See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the module boundaries and native API design, and [assets/README.md](assets/README.md) for icon provenance.
