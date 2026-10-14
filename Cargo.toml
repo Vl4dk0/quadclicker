@@ -1,0 +1,38 @@
+[package]
+name = "quadclicker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A native macOS quadtree mouse clicker"
+license = "MIT"
+
+[workspace]
+members = ["."]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSNotification", "NSObject", "NSString", "NSURL", "NSValue", "NSGeometry", "NSEnumerator"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSWindow", "NSPanel", "NSColor", "NSBezierPath", "NSScreen", "NSGraphics", "NSAlert", "NSWorkspace", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFRunLoop", "CFMachPort", "CFString", "CFCGTypes", "block2"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGDirectDisplay", "CGGeometry"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
