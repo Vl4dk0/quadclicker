@@ -31,6 +31,7 @@ bundle="$staging_dir/QuadClicker.app"
 extracted_bundle="$staging_dir/extracted/QuadClicker.app"
 [[ -x "$extracted_bundle/Contents/MacOS/quadclicker" ]]
 /usr/bin/codesign --verify --strict "$extracted_bundle"
+/usr/bin/cmp "$bundle/Contents/Info.plist" "$extracted_bundle/Contents/Info.plist"
 /usr/bin/cmp "$bundle/Contents/MacOS/quadclicker" "$extracted_bundle/Contents/MacOS/quadclicker"
 /usr/bin/cmp "$bundle/Contents/Resources/QuadClicker.icns" "$extracted_bundle/Contents/Resources/QuadClicker.icns"
 
