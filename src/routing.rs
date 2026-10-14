@@ -16,6 +16,7 @@ pub enum Command {
 pub struct Modifiers {
     pub shift: bool,
     pub shortcut: bool,
+    pub function: bool,
 }
 
 pub struct KeyRouter {
@@ -59,13 +60,22 @@ impl KeyRouter {
         std::mem::replace(held, false)
     }
     pub fn modifier_changed(&mut self, code: usize, pressed: bool) -> Option<Command> {
-        // Shift belongs to navigation (notably Shift+Backspace). Modifier events
-        // themselves always pass through so the target keeps its modifier state.
-        if !self.active || !pressed || matches!(code, 56 | 60) {
+        // Fn stays available as an activation-chord prefix, just as Shift stays
+        // available for reset. Modifiers pass through to preserve target state.
+        if !self.active || !pressed || matches!(code, 56 | 60 | 63) {
             return None;
         }
         self.active = false;
         Some(Command::Dismiss)
+    }
+
+    fn toggle(&mut self) -> Command {
+        if self.active {
+            self.active = false;
+            Command::Exit
+        } else {
+            Command::Activate
+        }
     }
 
     pub fn press(
@@ -80,15 +90,10 @@ impl KeyRouter {
         if *held {
             return (true, None);
         }
-        if code == 160 && !modifiers.shortcut && !modifiers.shift && !repeat {
+        let activation_key = code == 160 || (code == 49 && modifiers.function);
+        if activation_key && !modifiers.shortcut && !modifiers.shift && !repeat {
             *held = true;
-            let command = if self.active {
-                self.active = false;
-                Command::Exit
-            } else {
-                Command::Activate
-            };
-            return (true, Some(command));
+            return (true, Some(self.toggle()));
         }
         if !self.active {
             return (false, None);
@@ -99,9 +104,11 @@ impl KeyRouter {
             self.active = false;
             return (false, Some(Command::Dismiss));
         }
+        // Native keypad Enter (76) can carry Function metadata; it remains an
+        // Enter action, including the OS mapping of Fn+Return to that key code.
         let command = if code == 53 {
             Some(Command::Exit)
-        } else if modifiers.shortcut {
+        } else if modifiers.shortcut || (modifiers.function && code != 76) {
             None
         } else {
             match code {
@@ -155,7 +162,8 @@ mod tests {
                 36,
                 Modifiers {
                     shift: true,
-                    shortcut: false
+                    shortcut: false,
+                    function: false
                 },
                 false
             ),
@@ -168,7 +176,8 @@ mod tests {
                 32,
                 Modifiers {
                     shift: false,
-                    shortcut: true
+                    shortcut: true,
+                    function: false
                 },
                 false
             ),
@@ -181,7 +190,8 @@ mod tests {
                 51,
                 Modifiers {
                     shift: true,
-                    shortcut: false
+                    shortcut: false,
+                    function: false
                 },
                 false
             ),
@@ -198,7 +208,8 @@ mod tests {
                 53,
                 Modifiers {
                     shift: false,
-                    shortcut: true
+                    shortcut: true,
+                    function: false
                 },
                 false
             ),
@@ -210,7 +221,8 @@ mod tests {
                 36,
                 Modifiers {
                     shift: true,
-                    shortcut: true
+                    shortcut: true,
+                    function: false
                 },
                 true
             ),
@@ -222,7 +234,7 @@ mod tests {
         assert!(!router.press(32, Modifiers::default(), false).0);
     }
     #[test]
-    fn mission_control_activates_idle_and_owns_repeat_and_release() {
+    fn activation_aliases_toggle_and_own_full_presses() {
         let mut router = KeyRouter::default();
         assert_eq!(
             router.press(160, Modifiers::default(), false),
@@ -244,13 +256,73 @@ mod tests {
                     160,
                     Modifiers {
                         shift: false,
-                        shortcut: true
+                        shortcut: true,
+                        function: false
                     },
                     false
                 )
                 .0
         );
         assert!(!router.press(99, Modifiers::default(), false).0);
+
+        let fn_space = Modifiers {
+            function: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(router.modifier_changed(63, true), None);
+        assert_eq!(
+            router.press(49, fn_space, false),
+            (true, Some(Command::Activate))
+        );
+        router.activate();
+        assert_eq!(router.modifier_changed(63, false), None);
+        assert_eq!(router.press(49, Modifiers::default(), true), (true, None));
+        assert!(router.release(49));
+        assert_eq!(router.modifier_changed(63, true), None);
+        assert!(router.is_active());
+        assert_eq!(
+            router.press(49, fn_space, false),
+            (true, Some(Command::Exit))
+        );
+        assert!(router.release(49));
+        assert_eq!(
+            router.press(160, fn_space, false),
+            (true, Some(Command::Activate))
+        );
+        assert!(router.release(160));
+        for disallowed in [
+            Modifiers {
+                function: true,
+                shift: true,
+                shortcut: false,
+            },
+            Modifiers {
+                function: true,
+                shift: false,
+                shortcut: true,
+            },
+        ] {
+            assert_eq!(router.press(49, disallowed, false), (false, None));
+            assert!(!router.release(49));
+            router.activate();
+            assert_eq!(
+                router.press(49, disallowed, false),
+                (false, Some(Command::Dismiss))
+            );
+            assert!(!router.is_active());
+            assert!(!router.release(49));
+        }
+        assert_eq!(router.press(49, Modifiers::default(), false), (false, None));
+        assert_eq!(router.modifier_changed(63, true), None);
+        assert_eq!(router.press(49, fn_space, true), (false, None));
+        assert!(!router.release(49));
+        router.activate();
+        assert_eq!(
+            router.press(49, fn_space, true),
+            (false, Some(Command::Dismiss))
+        );
+        assert!(!router.is_active());
+        assert!(!router.release(49));
     }
     #[test]
     fn ordinary_typing_and_unowned_repeats_dismiss_without_acquiring_key_ownership() {
@@ -274,13 +346,37 @@ mod tests {
         assert!(router.release(38));
         assert!(!router.release(300));
 
-        for code in [56, 60] {
+        for code in [56, 60, 63] {
             router.activate();
             assert_eq!(router.modifier_changed(code, true), None);
             assert_eq!(router.modifier_changed(code, false), None);
             assert!(router.is_active());
         }
-        for code in [54, 55, 58, 61, 59, 62, 63, 57] {
+        let function = Modifiers {
+            function: true,
+            ..Modifiers::default()
+        };
+        for code in [32, 34, 38, 40, 51, 36] {
+            router.activate();
+            router.modifier_changed(63, true);
+            assert_eq!(
+                router.press(code, function, false),
+                (false, Some(Command::Dismiss))
+            );
+            assert!(!router.release(code));
+        }
+        router.modifier_changed(63, false);
+        router.activate();
+        assert_eq!(
+            router.press(76, function, false),
+            (true, Some(Command::Click))
+        );
+        assert!(router.release(76));
+        assert_eq!(
+            router.press(49, Modifiers::default(), false),
+            (false, Some(Command::Dismiss))
+        );
+        for code in [54, 55, 58, 61, 59, 62, 57] {
             router.activate();
             assert_eq!(router.modifier_changed(code, false), None);
             assert!(router.is_active());

@@ -124,9 +124,7 @@ impl Controller {
             }
             match action {
                 Action::Command(Command::Activate) => {
-                    eprintln!(
-                        "QuadClicker: physical Mission Control activation received (keycode 160)"
-                    );
+                    eprintln!("QuadClicker: activation shortcut received");
                     self.activate();
                 }
                 Action::Command(Command::Exit | Command::Dismiss) => self.stop(),

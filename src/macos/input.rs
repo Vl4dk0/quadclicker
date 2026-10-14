@@ -215,6 +215,7 @@ unsafe extern "C-unwind" fn callback(
                 code,
                 Modifiers {
                     shift: flags.contains(CGEventFlags::MaskShift),
+                    function: flags.contains(CGEventFlags::MaskSecondaryFn),
                     shortcut: flags.intersects(
                         CGEventFlags::MaskCommand
                             | CGEventFlags::MaskControl
