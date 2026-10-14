@@ -23,7 +23,7 @@ No Screen Recording permission is needed. After rebuilding, if macOS stops recog
 
 Opening QuadClicker activates the overlay. Choose **QC → Activate** from the menu bar, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit QuadClicker** exits the app.
 
-Keyboard activation setup will target the physical Mission Control button while retaining the keyboard's normal brightness and volume behavior. Setup instructions will be added once this path is implemented and verified. Double Option and Fn+Space activation are deferred.
+Physical Mission Control button activation is implemented and still needs testing on the Mac's hardware; use the menu or reopen the app if that button does not activate it. Keep the keyboard's normal brightness and volume behavior. Double Option and Fn+Space activation are deferred.
 
 Each direction selects one quarter of the current rectangle:
 
