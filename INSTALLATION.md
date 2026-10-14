@@ -57,6 +57,6 @@ To create the Apple Silicon release archive and SHA-256 checksum without install
 ./scripts/package-release.sh
 ```
 
-Artifacts are written to `target/releases/v0.3.0/`.
+Artifacts are written to `target/releases/v0.3.1/`.
 
 See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the module boundaries and native API design, and [assets/README.md](assets/README.md) for icon provenance.
