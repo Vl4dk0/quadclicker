@@ -2,7 +2,6 @@
 
 pub const MAX_DEPTH: usize = 9;
 const MAX_GRID_DIVISIONS: u16 = 512;
-const GRID_HISTORY_LIMIT: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NavigationMode {
@@ -148,7 +147,6 @@ struct GridState {
 struct GridSelection {
     root: Rect,
     state: GridState,
-    history: std::collections::VecDeque<GridState>,
 }
 
 impl GridSelection {
@@ -160,9 +158,8 @@ impl GridSelection {
                 column: 0,
                 row: 0,
             },
-            history: std::collections::VecDeque::new(),
         };
-        selection.reset();
+        selection.center_on_grid(4);
         selection
     }
 
@@ -189,19 +186,7 @@ impl GridSelection {
             .clamp(0.0, last) as u16;
     }
 
-    fn remember_change(&mut self, previous: GridState) {
-        if self.state == previous {
-            return;
-        }
-        // Undo remains bounded even during a long navigation session.
-        if self.history.len() == GRID_HISTORY_LIMIT {
-            self.history.pop_front();
-        }
-        self.history.push_back(previous);
-    }
-
     fn move_cell(&mut self, direction: Direction) {
-        let previous = self.state;
         let last = self.state.divisions - 1;
         match direction {
             Direction::Left => self.state.column = self.state.column.saturating_sub(1),
@@ -209,11 +194,9 @@ impl GridSelection {
             Direction::Up => self.state.row = self.state.row.saturating_sub(1),
             Direction::Right => self.state.column = self.state.column.saturating_add(1).min(last),
         }
-        self.remember_change(previous);
     }
 
     fn resize(&mut self, refine: bool) {
-        let previous = self.state;
         let divisions = if refine {
             if self.state.divisions >= MAX_GRID_DIVISIONS {
                 return;
@@ -230,17 +213,13 @@ impl GridSelection {
         let target = self.current().midpoint();
         self.state.divisions = divisions;
         self.select_at(target);
-        self.remember_change(previous);
-    }
-
-    fn back(&mut self) {
-        if let Some(previous) = self.history.pop_back() {
-            self.state = previous;
-        }
     }
 
     fn reset(&mut self) {
-        let mut divisions = 4;
+        self.center_on_grid(2);
+    }
+
+    fn center_on_grid(&mut self, mut divisions: u16) {
         while self.root.width / f64::from(divisions) < 1.0
             || self.root.height / f64::from(divisions) < 1.0
         {
@@ -248,12 +227,10 @@ impl GridSelection {
         }
         self.state.divisions = divisions;
         self.select_at(self.root.midpoint());
-        self.history.clear();
     }
 }
 
 /// Modes share a target area while keeping their own navigation resolution.
-/// Switching establishes a new undo origin instead of restoring stale movement.
 pub struct Navigation {
     root: Rect,
     mode: NavigationMode,
@@ -296,7 +273,6 @@ impl Navigation {
         match mode {
             NavigationMode::Grid => {
                 self.grid.select_at(target);
-                self.grid.history.clear();
             }
             NavigationMode::Quadtree => {
                 let depth = if self.quadtree.parents.is_empty() {
@@ -332,7 +308,7 @@ impl Navigation {
     pub fn back(&mut self) {
         match self.mode {
             NavigationMode::Quadtree => self.quadtree.back(),
-            NavigationMode::Grid => self.grid.back(),
+            NavigationMode::Grid => {}
         }
     }
     pub fn reset(&mut self) {
@@ -430,55 +406,61 @@ mod tests {
         assert_eq!(selection.current(), ninth);
     }
     #[test]
-    fn grid_movement_density_undo_and_reset() {
+    fn grid_movement_density_and_reset() {
         let Some(root) = Rect::new(-100.0, 20.0, 800.0, 600.0) else {
             panic!("valid fixture")
         };
-        let mut grid = GridSelection::new(root);
+        let mut navigation = Navigation::new(root);
+        navigation.switch_mode(NavigationMode::Grid);
         assert_eq!(
-            grid.state,
+            navigation.grid.state,
             GridState {
                 divisions: 4,
                 column: 2,
                 row: 2
             }
         );
-        let initial = grid.current();
-        grid.move_cell(Direction::Up);
-        grid.move_cell(Direction::Left);
-        assert_eq!(grid.state.row, 1);
-        assert_eq!(grid.state.column, 1);
-        let target = grid.current().midpoint();
-        grid.resize(true);
-        assert_eq!(grid.state.divisions, 8);
-        assert!(grid.current().contains(target));
-        grid.back();
-        assert_eq!(grid.state.divisions, 4);
-        grid.back();
-        assert_eq!(grid.state.column, 2);
-        grid.back();
-        assert_eq!(grid.current(), initial);
-        grid.move_cell(Direction::Up);
-        grid.move_cell(Direction::Up);
-        let changes = grid.history.len();
-        grid.move_cell(Direction::Up);
-        assert_eq!(grid.history.len(), changes);
-        grid.reset();
-        assert_eq!(grid.current(), initial);
-        grid.back();
-        assert_eq!(grid.current(), initial);
+        navigation.move_cell(Direction::Up);
+        navigation.move_cell(Direction::Left);
+        assert_eq!(navigation.grid.state.row, 1);
+        assert_eq!(navigation.grid.state.column, 1);
+        let target = navigation.current().midpoint();
+        navigation.resize_grid(true);
+        assert_eq!(navigation.grid.state.divisions, 8);
+        assert!(navigation.current().contains(target));
+        let refined = navigation.current();
+        navigation.back();
+        assert_eq!(navigation.current(), refined);
         for _ in 0..12 {
-            grid.resize(false);
+            navigation.move_cell(Direction::Up);
+            navigation.move_cell(Direction::Left);
         }
-        assert_eq!(grid.state.divisions, 1);
-        assert_eq!(grid.current(), root);
-        let changes = grid.history.len();
-        grid.resize(false);
-        assert_eq!(grid.history.len(), changes);
+        assert_eq!(navigation.grid.state.row, 0);
+        assert_eq!(navigation.grid.state.column, 0);
+        navigation.reset();
+        assert_eq!(
+            navigation.grid.state,
+            GridState {
+                divisions: 2,
+                column: 1,
+                row: 1
+            }
+        );
+        assert!(navigation.current().contains(root.midpoint()));
+        let reset = navigation.current();
+        navigation.back();
+        assert_eq!(navigation.current(), reset);
+        for _ in 0..12 {
+            navigation.resize_grid(false);
+        }
+        assert_eq!(navigation.grid.state.divisions, 1);
+        assert_eq!(navigation.current(), root);
+        navigation.resize_grid(false);
+        assert_eq!(navigation.current(), root);
     }
 
     #[test]
-    fn grid_refinement_and_history_are_bounded() {
+    fn grid_refinement_is_bounded() {
         let Some(root) = Rect::new(0.0, 0.0, 4096.0, 4096.0) else {
             panic!("valid fixture")
         };
@@ -487,11 +469,6 @@ mod tests {
             grid.resize(true);
         }
         assert_eq!(grid.state.divisions, 512);
-        for _ in 0..300 {
-            grid.move_cell(Direction::Left);
-            grid.move_cell(Direction::Right);
-        }
-        assert_eq!(grid.history.len(), GRID_HISTORY_LIMIT);
         let Some(small) = Rect::new(0.0, 0.0, 3.0, 5.0) else {
             panic!("valid fixture")
         };
@@ -500,6 +477,13 @@ mod tests {
         let last = grid.current();
         grid.resize(true);
         assert_eq!(grid.current(), last);
+        let Some(tiny) = Rect::new(0.0, 0.0, 1.0, 1.0) else {
+            panic!("valid fixture")
+        };
+        let mut grid = GridSelection::new(tiny);
+        grid.reset();
+        assert_eq!(grid.state.divisions, 1);
+        assert_eq!(grid.current(), tiny);
     }
 
     #[test]

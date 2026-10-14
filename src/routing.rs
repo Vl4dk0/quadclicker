@@ -269,6 +269,19 @@ mod tests {
             );
             assert!(router.release(code));
         }
+        // Grid back is a no-op, but its full physical press remains owned.
+        for code in [31, 51] {
+            for (shift, command) in [(false, Command::Back), (true, Command::Reset)] {
+                let modifiers = Modifiers {
+                    shift,
+                    ..Modifiers::default()
+                };
+                assert_eq!(router.press(code, modifiers, false), (true, Some(command)));
+                assert!(router.is_active());
+                assert_eq!(router.press(code, modifiers, true), (true, None));
+                assert!(router.release(code));
+            }
+        }
         assert_eq!(
             router.press(46, Modifiers::default(), false),
             (true, Some(Command::SwitchMode(NavigationMode::Quadtree)))
