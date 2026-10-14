@@ -17,13 +17,15 @@ The Mission Control icon button is often in the F3 position; standard F3 is a di
 
 The overlay starts on the display containing the pointer. It stays out of keyboard focus and lets physical mouse clicks pass through. Navigation uses physical key positions, independent of keyboard layout. 
 
+The last mode is remembered across activations and app restarts. Each activation resets navigation to a Quadtree root or a 2×2 Grid; previous selection, density, and display are not restored. Grid also starts at 2×2 when first selected in a session.
+
 Holding navigation keys repeats using macOS’s keyboard repeat delay and speed: H/J/K/L and U/I in Grid; U/I/J/K, O, and Backspace in Quadtree. Click, mode switch, reset, activation, and display switch act once per press. 
 
 Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size. 
 
 Shift+H and Shift+L switch to the previous or next display in both modes. Displays are ordered left to right, then top to bottom, with wraparound. Switching preserves the mode, grid density or quadtree depth, and the target’s relative position; depth or density is reduced only when needed to keep cells at least one logical point. Other supported Shift direction combinations retain their navigation behavior. 
 
-Enter clicks without modifiers; native keypad Enter is also supported. Unsupported shortcuts dismiss the overlay and pass through to the app underneath.
+Enter clicks without modifiers; native keypad Enter is also supported. New unsupported key presses silently dismiss the overlay; their down, repeats, and release are consumed. Modifier changes still pass through, and keys already held before activation keep their original ownership.
 
 ## Updates and limitations
 

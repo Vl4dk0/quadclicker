@@ -4,8 +4,8 @@ QuadClicker is a native macOS menu bar application. Rust owns navigation and inp
 
 ## State and modules
 
-- `navigation`: finite positive rectangles, quadtree parent history, grid selection, and midpoint. Quadtree root depth is zero and allows nine subdivisions. Grid starts at 4×4, moves by whole cells without wrapping, and halves or doubles cells per side from 1 to 512. Both modes retain a one-point minimum cell dimension.
-- `routing`: pure physical-key policy and press ownership. Active navigation commands are consumed; unrelated keys dismiss the overlay and pass through unchanged. A consumed press retains its repeats and key-up even after dismissal or modifier changes; only repeatable navigation commands execute on autorepeat.
+- `navigation`: finite positive rectangles, quadtree parent history, grid selection, and midpoint. Quadtree root depth is zero and allows nine subdivisions. Grid starts at 2×2, moves by whole cells without wrapping, and halves or doubles cells per side from 1 to 512. Both modes retain a one-point minimum cell dimension.
+- `routing`: pure physical-key policy and press ownership. Active navigation commands and new unrelated dismissal presses are consumed. A consumed press retains its repeats and key-up even after dismissal or modifier changes; only repeatable navigation commands execute on autorepeat. Presses already owned by another app retain that ownership.
 - `macos/app`: application lifecycle, menu, activation, selected display, command execution, and native resource ownership. The menu contains Activate and Quit.
 - `macos/input`: filtering session event tap, modifier translation, queued commands, and synthetic clicks.
 - `macos/overlay`: retained nonactivating, non-key, mouse-transparent panel and drawing view. It redraws the selected rectangle, red dot with a contrast halo, and top-left mode label on state changes. Grid lines are shown when cells are at least 12 logical points wide and high; the exact selection and density label remain visible at smaller sizes. Subtle rounded selection corners scale down for tiny cells.
@@ -15,7 +15,7 @@ QuadClicker is a native macOS menu bar application. Rust owns navigation and inp
 
 ## Activation and input ownership
 
-The filtering event tap stays available while idle, so the physical Mission Control button (virtual code 160) or Fn+Space can activate the app. Standard F3 (code 99) is distinct. Both activation shortcuts start a fresh Quadtree root when idle and close the overlay when active. Opening or reopening the application, or choosing Activate, also starts a fresh Quadtree session.
+The filtering event tap stays available while idle, so the physical Mission Control button (virtual code 160) or Fn+Space can activate the app. Standard F3 (code 99) is distinct. Both activation shortcuts start fresh navigation in the remembered mode when idle and close the overlay when active. Opening or reopening the application, or choosing Activate, follows the same policy: a Quadtree root or a 2×2 Grid. NSUserDefaults persists only the last mode across app restarts; cell selection, density, history, and display are not persisted.
 
 Fn+Space is recognized from the Space event’s SecondaryFn flag, rather than global modifier state, which can lag an event. Shift, Command, Option, and Control disqualify the chord. Caps Lock does not. The Mission Control event may also carry Function metadata.
 
@@ -27,7 +27,7 @@ Quadtree uses U/I/J/K for quadrants. Grid uses H/J/K/L for left/down/up/right an
 
 O and Backspace select the parent in Quadtree and do nothing in Grid. Shift+O and Shift+Backspace reset the current mode: Quadtree to its root, Grid to screen-centred 2×2. Unmodified H is Grid’s left command. Shift+H and Shift+L select the previous or next display in both modes.
 
-Unrelated keys dismiss navigation immediately and pass the original event through. Dismissal clears pending commands, including clicks. A generation boundary prevents commands from an old activation from executing during a new one. Opening the app’s menu suspends navigation before AppKit handles menu keyboard input.
+New unrelated key presses dismiss navigation immediately and are consumed through their final key-up, preventing underlying typing or an invalid-action beep. Modifier flag changes remain passed through, including those that dismiss the overlay. Presses that began outside navigation remain passed through rather than being claimed midway. Dismissal clears pending commands, including clicks. A generation boundary prevents commands from an old activation from executing during a new one. Opening the app’s menu suspends navigation before AppKit handles menu keyboard input.
 
 ## Main thread and native lifetimes
 
