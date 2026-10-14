@@ -56,10 +56,10 @@ fn draw_grid(state: OverlayState) {
         grid.lineToPoint(NSPoint::new(state.root.x + state.root.width, y));
     }
     NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, 0.35).setStroke();
-    grid.setLineWidth(2.0);
+    grid.setLineWidth(0.5);
     grid.stroke();
     NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.45).setStroke();
-    grid.setLineWidth(0.75);
+    grid.setLineWidth(0.25);
     grid.stroke();
 }
 
