@@ -70,6 +70,4 @@ To create the Apple Silicon release archive and SHA-256 checksum without install
 
 Artifacts are written to `target/releases/v0.1.0/`.
 
-Released under the [MIT license](LICENSE).
-
 See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the module boundaries and native API design, and [assets/README.md](assets/README.md) for icon provenance.
