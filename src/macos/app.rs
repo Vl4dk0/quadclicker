@@ -4,7 +4,7 @@ use super::{
     overlay::Overlay,
     permissions, scheduling,
 };
-use crate::navigation::Selection;
+use crate::navigation::Navigation;
 use crate::routing::Command;
 use anyhow::{Context, Result};
 use objc2::rc::Retained;
@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 struct Session {
     display: Display,
-    selection: Selection,
+    navigation: Navigation,
     overlay: Overlay,
 }
 
@@ -91,8 +91,8 @@ impl Controller {
     }
     fn start_session(&self) -> Result<()> {
         let display = Display::under_pointer(self.mtm)?;
-        let selection = Selection::new(display.local_bounds()?);
-        let overlay = Overlay::new(self.mtm, display, selection.current());
+        let navigation = Navigation::new(display.local_bounds()?);
+        let overlay = Overlay::new(self.mtm, display, navigation.overlay_state());
         if self.tap.borrow().is_none() {
             let tap = EventTap::new(self.dispatch.clone())?;
             *self.tap.borrow_mut() = Some(tap);
@@ -104,7 +104,7 @@ impl Controller {
         overlay.show();
         *self.session.borrow_mut() = Some(Session {
             display,
-            selection,
+            navigation,
             overlay,
         });
         Ok(())
@@ -167,19 +167,22 @@ impl Controller {
             );
         }
         match command {
-            Command::Descend(quadrant) => session.selection.descend(quadrant),
-            Command::Back => session.selection.back(),
-            Command::Reset => session.selection.reset(),
+            Command::Descend(quadrant) => session.navigation.descend(quadrant),
+            Command::Move(direction) => session.navigation.move_cell(direction),
+            Command::ResizeGrid { refine } => session.navigation.resize_grid(refine),
+            Command::SwitchMode(mode) => session.navigation.switch_mode(mode),
+            Command::Back => session.navigation.back(),
+            Command::Reset => session.navigation.reset(),
             Command::Click => {
                 return input::click(
                     session
                         .display
-                        .click_point(session.selection.current().midpoint()),
+                        .click_point(session.navigation.current().midpoint()),
                 );
             }
             Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
         }
-        session.overlay.update(session.selection.current());
+        session.overlay.update(session.navigation.overlay_state());
         Ok(())
     }
     fn show_permission_help(&self) {

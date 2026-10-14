@@ -1,9 +1,12 @@
 //! Physical key ownership ensures an intercepted press never leaks its release.
-use crate::navigation::Quadrant;
+use crate::navigation::{Direction, NavigationMode, Quadrant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Descend(Quadrant),
+    Move(Direction),
+    ResizeGrid { refine: bool },
+    SwitchMode(NavigationMode),
     Back,
     Reset,
     Click,
@@ -21,6 +24,7 @@ pub struct Modifiers {
 
 pub struct KeyRouter {
     active: bool,
+    mode: NavigationMode,
     held: [bool; 256],
 }
 
@@ -28,6 +32,7 @@ impl Default for KeyRouter {
     fn default() -> Self {
         Self {
             active: false,
+            mode: NavigationMode::Quadtree,
             held: [false; 256],
         }
     }
@@ -36,6 +41,7 @@ impl Default for KeyRouter {
 impl KeyRouter {
     pub fn activate(&mut self) {
         self.active = true;
+        self.mode = NavigationMode::Quadtree;
     }
     pub fn deactivate(&mut self) {
         self.active = false;
@@ -112,14 +118,32 @@ impl KeyRouter {
             None
         } else {
             match code {
-                32 => Some(Command::Descend(Quadrant::TopLeft)),
-                34 => Some(Command::Descend(Quadrant::TopRight)),
-                38 => Some(Command::Descend(Quadrant::BottomLeft)),
-                40 => Some(Command::Descend(Quadrant::BottomRight)),
-                4 | 51 if modifiers.shift => Some(Command::Reset),
-                4 | 51 => Some(Command::Back),
+                46 if !modifiers.shift => {
+                    // Commands drain later. Update routing now so the next key
+                    // already uses the mode requested by this physical press.
+                    self.mode = match self.mode {
+                        NavigationMode::Quadtree => NavigationMode::Grid,
+                        NavigationMode::Grid => NavigationMode::Quadtree,
+                    };
+                    Some(Command::SwitchMode(self.mode))
+                }
+                31 | 51 if modifiers.shift => Some(Command::Reset),
+                31 | 51 => Some(Command::Back),
                 36 | 76 if !modifiers.shift => Some(Command::Click),
-                _ => None,
+                _ if modifiers.shift => None,
+                _ => match (self.mode, code) {
+                    (NavigationMode::Quadtree, 32) => Some(Command::Descend(Quadrant::TopLeft)),
+                    (NavigationMode::Quadtree, 34) => Some(Command::Descend(Quadrant::TopRight)),
+                    (NavigationMode::Quadtree, 38) => Some(Command::Descend(Quadrant::BottomLeft)),
+                    (NavigationMode::Quadtree, 40) => Some(Command::Descend(Quadrant::BottomRight)),
+                    (NavigationMode::Grid, 4) => Some(Command::Move(Direction::Left)),
+                    (NavigationMode::Grid, 38) => Some(Command::Move(Direction::Down)),
+                    (NavigationMode::Grid, 40) => Some(Command::Move(Direction::Up)),
+                    (NavigationMode::Grid, 37) => Some(Command::Move(Direction::Right)),
+                    (NavigationMode::Grid, 32) => Some(Command::ResizeGrid { refine: false }),
+                    (NavigationMode::Grid, 34) => Some(Command::ResizeGrid { refine: true }),
+                    _ => None,
+                },
             }
         };
         if let Some(command) = command {
@@ -157,7 +181,7 @@ mod tests {
             assert_eq!(router.press(code, Modifiers::default(), true), (true, None));
             assert!(router.release(code));
         }
-        for code in [4, 51] {
+        for code in [31, 51] {
             for (shift, command) in [(false, Command::Back), (true, Command::Reset)] {
                 let modifiers = Modifiers {
                     shift,
@@ -197,7 +221,7 @@ mod tests {
         );
         assert!(!router.is_active());
         router.activate();
-        for code in [4, 51] {
+        for code in [31, 51] {
             for shift in [false, true] {
                 router.activate();
                 assert_eq!(
@@ -217,6 +241,63 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn mode_switch_routes_immediately_and_preserves_key_ownership() {
+        let mut router = KeyRouter::default();
+        router.activate();
+        assert_eq!(
+            router.press(46, Modifiers::default(), false),
+            (true, Some(Command::SwitchMode(NavigationMode::Grid)))
+        );
+        assert_eq!(router.press(46, Modifiers::default(), true), (true, None));
+        assert_eq!(
+            router.press(4, Modifiers::default(), false),
+            (true, Some(Command::Move(Direction::Left)))
+        );
+        assert!(router.release(4));
+        assert!(router.release(46));
+        for (code, command) in [
+            (38, Command::Move(Direction::Down)),
+            (40, Command::Move(Direction::Up)),
+            (37, Command::Move(Direction::Right)),
+            (32, Command::ResizeGrid { refine: false }),
+            (34, Command::ResizeGrid { refine: true }),
+        ] {
+            assert_eq!(
+                router.press(code, Modifiers::default(), false),
+                (true, Some(command))
+            );
+            assert!(router.release(code));
+        }
+        assert_eq!(
+            router.press(46, Modifiers::default(), false),
+            (true, Some(Command::SwitchMode(NavigationMode::Quadtree)))
+        );
+        assert!(router.release(46));
+        assert_eq!(
+            router.press(4, Modifiers::default(), false),
+            (false, Some(Command::Dismiss))
+        );
+        assert!(!router.release(4));
+        router.activate();
+        assert_eq!(
+            router.press(40, Modifiers::default(), false),
+            (true, Some(Command::Descend(Quadrant::BottomRight)))
+        );
+        assert!(router.release(40));
+        assert_eq!(
+            router.press(
+                4,
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                false
+            ),
+            (false, Some(Command::Dismiss))
+        );
+    }
+
     #[test]
     fn escape_and_changed_modifiers_keep_paired_releases_owned() {
         let mut router = KeyRouter::default();
@@ -375,7 +456,7 @@ mod tests {
             function: true,
             ..Modifiers::default()
         };
-        for code in [32, 34, 38, 40, 4, 51, 36] {
+        for code in [32, 34, 38, 40, 31, 51, 36] {
             router.activate();
             router.modifier_changed(63, true);
             assert_eq!(
