@@ -4,24 +4,28 @@ QuadClicker is a native macOS menu bar application. Rust owns navigation and inp
 
 ## State and modules
 
-- `navigation`: finite positive rectangles, quadrants, parent history, and midpoint. Root depth is zero; one `MAX_DEPTH` constant allows nine subdivisions. Parent history supplies depth, and children have a one-point minimum dimension.
+- `navigation`: finite positive rectangles, quadtree parent history, grid selection and undo history, and midpoint. Quadtree root depth is zero and allows nine subdivisions. Grid starts at 4×4, moves by whole cells without wrapping, and halves or doubles cells per side from 1 to 512. Both modes retain a one-point minimum cell dimension.
 - `routing`: pure physical-key policy and press ownership. Active navigation commands are consumed; unrelated keys dismiss the overlay and pass through unchanged. A consumed press retains its repeats and key-up even after dismissal or modifier changes.
 - `macos/app`: application lifecycle, menu, activation, selected display, command execution, and native resource ownership. The menu contains Activate and Quit.
 - `macos/input`: filtering session event tap, modifier translation, queued commands, and synthetic clicks.
-- `macos/overlay`: retained nonactivating, non-key, mouse-transparent panel and drawing view. It redraws the selected rectangle and dot on state changes.
+- `macos/overlay`: retained nonactivating, non-key, mouse-transparent panel and drawing view. It redraws the selected rectangle, red dot with a contrast halo, and top-left mode label on state changes. Grid lines are shown when cells are at least 12 logical points wide and high; the exact selection and density label remain visible at smaller sizes. Subtle rounded selection corners scale down for tiny cells.
 - `macos/display`: display selection and conversion between AppKit and Quartz coordinates.
 - `macos/permissions`: Accessibility and event-posting checks, the initial native consent request, and recoverable error presentation.
 - `macos/scheduling`: main-run-loop deferred work, without a polling timer or fixed sleep.
 
 ## Activation and input ownership
 
-The filtering event tap stays available while idle, so the physical Mission Control button (virtual code 160) or Fn+Space can activate the app. Standard F3 (code 99) is distinct. Both activation shortcuts open a fresh root when idle and close the overlay when active. Opening or reopening the application, or choosing Activate, requests a fresh root.
+The filtering event tap stays available while idle, so the physical Mission Control button (virtual code 160) or Fn+Space can activate the app. Standard F3 (code 99) is distinct. Both activation shortcuts start a fresh Quadtree root when idle and close the overlay when active. Opening or reopening the application, or choosing Activate, also starts a fresh Quadtree session.
 
 Fn+Space is recognized from the Space event’s SecondaryFn flag, rather than global modifier state, which can lag an event. Shift, Command, Option, and Control disqualify the chord. Caps Lock does not. The Mission Control event may also carry Function metadata.
 
 A consumed press owns its down, repeats, and final up. Releasing Fn before Space therefore cannot leak the Space release. A Space press that began outside the shortcut remains owned by the target app; adding Fn during autorepeat cannot activate QuadClicker. Shift and Fn alone remain harmless prefixes while the overlay is active. Other modifier presses dismiss it. Escape always exits; keypad Enter retains native Enter behavior even when it carries Function metadata.
 
-The physical H key aliases Backspace: unmodified presses select the parent rectangle, and Shift selects the root. Both keys share the same modifier and press-ownership policy.
+M switches modes around the current click target: the destination selection contains that point, although its midpoint can change. Grid density is retained within the active session. Switching into Grid clears its old undo history before selecting the cell containing the target. Enter always clicks the selected rectangle's midpoint.
+
+Quadtree uses U/I/J/K for quadrants. Grid uses H/J/K/L for left/down/up/right and U/I to halve/double cells per side. Resizing selects the cell containing the previous midpoint. Movement stops at display edges; blocked commands do not add undo entries. Grid retains the 256 most recent successful movement and resize steps.
+
+O and Backspace select the parent in Quadtree or undo the last successful movement or resize in Grid. Shift+O and Shift+Backspace reset the current mode: Quadtree to its root, Grid to screen-centred 4×4 with cleared history. H is exclusively Grid's left command; the earlier Quadtree H/Shift+H aliases are removed.
 
 Unrelated keys dismiss navigation immediately and pass the original event through. Dismissal clears pending commands, including clicks. A generation boundary prevents commands from an old activation from executing during a new one. Opening the app’s menu suspends navigation before AppKit handles menu keyboard input.
 
