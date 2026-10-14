@@ -8,14 +8,15 @@ Requires macOS 13 or newer and a Rust toolchain. From this directory:
 
 ```sh
 ./scripts/build-app.sh
-open dist/QuadClicker.app
+ditto dist/QuadClicker.app /Applications/QuadClicker.app
+open /Applications/QuadClicker.app
 ```
 
-The build produces a locally signed app at `dist/QuadClicker.app`. Keep it at that location for a consistent app identity. Ad-hoc signing may require granting permission again after rebuilding.
+The build produces a locally signed app at `dist/QuadClicker.app`; the next command installs it in `/Applications`. Run that installed copy for a consistent app identity. Quit QuadClicker before installing an updated build. Ad-hoc signing may require granting permission again after rebuilding.
 
 ## Accessibility permission
 
-The first launch offers to open **System Settings → Privacy & Security → Accessibility**. You can also open it through **QC → Accessibility Setup…** in the menu bar. Click **+**, press **Command+Shift+G**, enter `/Users/vladko/Projects/quadclicker/dist`, and select **QuadClicker.app**. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
+The first launch offers to open **System Settings → Privacy & Security → Accessibility**. You can also open it through **QC → Accessibility Setup…** in the menu bar. Enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications`, select **QuadClicker.app**, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
 
 No Screen Recording permission is needed. After rebuilding, if macOS stops recognizing the permission, remove the app from the Accessibility list, add the newly built app, and reopen it.
 
