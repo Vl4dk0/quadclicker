@@ -64,8 +64,11 @@ impl Dispatch {
     }
     fn enqueue(&self, action: Action) {
         let mut queue = self.queue.borrow_mut();
-        if matches!(action, Action::Command(Command::Exit) | Action::Failed(_)) {
-            // Escape/failure cancels even clicks waiting from this run-loop turn.
+        if matches!(
+            action,
+            Action::Command(Command::Exit | Command::Dismiss) | Action::Failed(_)
+        ) {
+            // Exiting, typing, or failure cancels clicks waiting in this run-loop turn.
             queue.clear();
         }
         if queue.len() >= 128 {

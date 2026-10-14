@@ -8,6 +8,7 @@ pub enum Command {
     Reset,
     Click,
     Exit,
+    Dismiss,
     Activate,
 }
 
@@ -73,8 +74,14 @@ impl KeyRouter {
             *held = true;
             return (true, Some(Command::Activate));
         }
-        if !self.active || repeat {
+        if !self.active {
             return (false, None);
+        }
+        if repeat {
+            // A press that began outside QuadClicker still belongs to the target
+            // app. Its repeats dismiss navigation instead of becoming commands.
+            self.active = false;
+            return (false, Some(Command::Dismiss));
         }
         let command = if code == 53 {
             Some(Command::Exit)
@@ -99,7 +106,10 @@ impl KeyRouter {
             }
             (true, Some(command))
         } else {
-            (false, None)
+            // Preserve the original key event. Only navigation commands acquire
+            // key ownership; ordinary typing and shortcuts return to the target.
+            self.active = false;
+            (false, Some(Command::Dismiss))
         }
     }
 }
@@ -133,8 +143,10 @@ mod tests {
                 },
                 false
             ),
-            (false, None)
+            (false, Some(Command::Dismiss))
         );
+        assert!(!router.is_active());
+        router.activate();
         assert_eq!(
             router.press(
                 32,
@@ -144,8 +156,10 @@ mod tests {
                 },
                 false
             ),
-            (false, None)
+            (false, Some(Command::Dismiss))
         );
+        assert!(!router.is_active());
+        router.activate();
         assert_eq!(
             router.press(
                 51,
@@ -215,13 +229,25 @@ mod tests {
         assert!(!router.press(99, Modifiers::default(), false).0);
     }
     #[test]
-    fn inactive_unknown_keys_and_preexisting_repeats_pass_through() {
+    fn ordinary_typing_and_unowned_repeats_dismiss_without_acquiring_key_ownership() {
         let mut router = KeyRouter::default();
-        assert!(!router.press(32, Modifiers::default(), false).0);
+        assert_eq!(router.press(32, Modifiers::default(), false), (false, None));
         router.activate();
-        assert!(!router.press(32, Modifiers::default(), true).0);
-        assert!(!router.press(0, Modifiers::default(), false).0);
+        assert_eq!(
+            router.press(32, Modifiers::default(), true),
+            (false, Some(Command::Dismiss))
+        );
+        assert!(!router.is_active());
+        assert!(!router.release(32));
+        router.activate();
+        assert!(router.press(38, Modifiers::default(), false).0);
+        assert_eq!(
+            router.press(0, Modifiers::default(), false),
+            (false, Some(Command::Dismiss))
+        );
+        assert!(!router.is_active());
         assert!(!router.release(0));
+        assert!(router.release(38));
         assert!(!router.release(300));
     }
 }

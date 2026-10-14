@@ -120,7 +120,7 @@ impl Controller {
                     );
                     self.activate();
                 }
-                Action::Command(Command::Exit) => self.stop(),
+                Action::Command(Command::Exit | Command::Dismiss) => self.stop(),
                 Action::Failed(message) => {
                     eprintln!("QuadClicker: {message}");
                     self.stop();
@@ -170,7 +170,7 @@ impl Controller {
                         .click_point(session.selection.current().midpoint()),
                 );
             }
-            Command::Exit | Command::Activate => return Ok(()),
+            Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
         }
         session.overlay.update(session.selection.current());
         Ok(())
