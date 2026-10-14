@@ -16,7 +16,7 @@ The build produces a locally signed app at `dist/QuadClicker.app`; the next comm
 
 ## Accessibility permission
 
-The first launch offers to open **System Settings → Privacy & Security → Accessibility**. You can also open it through **QC → Accessibility Setup…** in the menu bar. Enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications`, select **QuadClicker.app**, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
+When permission is missing, QuadClicker requests Accessibility access through macOS and opens **System Settings → Privacy & Security → Accessibility**. You can also open setup through **QC → Accessibility Setup…** in the menu bar. Enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications`, select **QuadClicker.app**, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **QC → Activate**, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
 
 No Screen Recording permission is needed. After rebuilding, if macOS stops recognizing the permission, remove the app from the Accessibility list, add the newly built app, and reopen it.
 
