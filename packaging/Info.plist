@@ -10,6 +10,8 @@
     <string>sk.vladimirjancar.quadclicker</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>QuadClicker</string>
     <key>CFBundleName</key>
     <string>QuadClicker</string>
     <key>CFBundleDisplayName</key>
