@@ -51,6 +51,15 @@ impl Controller {
             presenting: Cell::new(false),
         })
     }
+    fn launch(self: &Rc<Self>) {
+        if permissions::granted() {
+            self.request_activation();
+        } else {
+            // Request consent once at launch, without stacking our own dialog
+            // over the system prompt or redirecting the user into Settings.
+            permissions::request_on_launch();
+        }
+    }
     fn request_activation(self: &Rc<Self>) {
         if self.shutting_down.get() {
             return;
@@ -72,7 +81,7 @@ impl Controller {
         }
         self.stop();
         if !permissions::granted() {
-            self.show_setup();
+            self.show_permission_help();
             return;
         }
         if let Err(error) = self.start_session() {
@@ -175,8 +184,8 @@ impl Controller {
         session.overlay.update(session.selection.current());
         Ok(())
     }
-    fn show_setup(&self) {
-        self.present(|| permissions::setup(self.mtm));
+    fn show_permission_help(&self) {
+        self.present(|| permissions::explain_missing_permission(self.mtm));
     }
     fn show_error(&self, message: &str) {
         self.present(|| permissions::error(self.mtm, message));
@@ -218,7 +227,7 @@ define_class!(
     // SAFETY: Delegate is retained throughout NSApplication::run.
     unsafe impl NSApplicationDelegate for Delegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
-        fn launched(&self, _notification: &NSNotification) { self.ivars().controller.request_activation(); }
+        fn launched(&self, _notification: &NSNotification) { self.ivars().controller.launch(); }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _app: &NSApplication, _visible: bool) -> bool {
             self.ivars().controller.request_activation(); false
@@ -243,8 +252,6 @@ define_class!(
     impl Delegate {
         #[unsafe(method(activateOverlay:))]
         fn activate_overlay(&self, _sender: &NSObject) { self.ivars().controller.request_activation(); }
-        #[unsafe(method(accessibilitySetup:))]
-        fn accessibility_setup(&self, _sender: &NSObject) { self.ivars().controller.show_setup(); }
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: &NSObject) {
             self.ivars().controller.shutdown(); NSApplication::sharedApplication(self.mtm()).terminate(None);
@@ -280,11 +287,7 @@ impl Delegate {
         menu.setDelegate(Some(ProtocolObject::from_ref(self)));
         for (title, selector) in [
             (ns_string!("Activate"), sel!(activateOverlay:)),
-            (
-                ns_string!("Accessibility Setup…"),
-                sel!(accessibilitySetup:),
-            ),
-            (ns_string!("Quit QuadClicker"), sel!(quit:)),
+            (ns_string!("Quit"), sel!(quit:)),
         ] {
             // SAFETY: Selectors match the target's registered object-argument methods.
             let menu_item = unsafe {
