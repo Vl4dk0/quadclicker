@@ -1,98 +1,64 @@
-# QuadClicker implementation plan
+# QuadClicker architecture
 
-Build a small native macOS menu bar app in Rust. Use public AppKit and Core Graphics APIs through `objc2`; keep the quadtree state independent of macOS. The first release is a local Apple Silicon app activated by the physical Mission Control icon button alone or Fn+Space. Preserve the default direct brightness, volume, and other function-row behavior. Shortcut customization and alternate activation gestures come later.
+QuadClicker is a native macOS menu bar application. Rust owns navigation and input policy; public AppKit and Core Graphics APIs provide the overlay, keyboard interception, and mouse events. The native boundary uses `objc2` framework bindings. There is no virtual keyboard driver, private API, or system shortcut rewrite.
 
-## User flow
+## State and modules
 
-Opening `QuadClicker.app` requests activation when permission is available; otherwise startup makes one native permission request for that process. Show a transparent overlay on the display containing the pointer, using that display's full bounds as the root. Opening the already-running app activates a fresh root again. Escape hides the overlay and leaves the menu bar app running. Its menu contains exactly Activate and Quit; Activate runs after the menu has closed, without a fixed sleep or stealing the target application's focus.
+- `navigation`: finite positive rectangles, quadrants, parent history, and midpoint. Root depth is zero; one `MAX_DEPTH` constant allows nine subdivisions. Parent history supplies depth, and children have a one-point minimum dimension.
+- `routing`: pure physical-key policy and press ownership. Active navigation commands are consumed; unrelated keys dismiss the overlay and pass through unchanged. A consumed press retains its repeats and key-up even after dismissal or modifier changes.
+- `macos/app`: application lifecycle, menu, activation, selected display, command execution, and native resource ownership. The menu contains Activate and Quit.
+- `macos/input`: filtering session event tap, modifier translation, queued commands, and synthetic clicks.
+- `macos/overlay`: retained nonactivating, non-key, mouse-transparent panel and drawing view. It redraws the selected rectangle and dot on state changes.
+- `macos/display`: display selection and conversion between AppKit and Quartz coordinates.
+- `macos/permissions`: Accessibility and event-posting checks, the initial native consent request, and recoverable error presentation.
+- `macos/scheduling`: main-run-loop deferred work, without a polling timer or fixed sleep.
 
-Use a public filtering `CGEventTap` at the session head to handle the Mission Control button's actual keyboard event and consume its down/repeat/up sequence. Apple open-source keyboard tables identify virtual keycode `0xA0` (160) as Expose All, distinct from standard F3 (`0x63`, 99). The user has confirmed that the physical Mission Control button activates QuadClicker on this Mac after granting Accessibility access. No private API, virtual keyboard driver, preference rewrite, or whole-row function-key setting is needed.
+## Activation and input ownership
 
-Keep the tap enabled while the app is idle, but route only the unmodified Mission Control button or Fn+Space to activation; pass all unrelated input unchanged. Navigation commands are enabled only while the overlay is open. Both activation shortcuts open a fresh root when idle and close the overlay when active. Consume the triggering key-down, repeats, and paired key-up so Mission Control or a space character does not reach the underlying app. Holding either shortcut must not repeatedly toggle. Preserve menu/reopen activation if the tap is unavailable. Do not require Fn, switch the entire function row to standard keys, or change system shortcut settings automatically. Double Option remains out of scope. Recognize Fn+Space from the Space event’s SecondaryFn flag; the real keyboard probe confirmed this flag on Fn+Space and its absence on plain Space. Do not sample global modifier state, which can lag the event. Shift, Command, Option, and Control disqualify this shortcut; Caps Lock does not. The Mission Control key may itself carry SecondaryFn and must continue working.
+The filtering event tap stays available while idle, so the physical Mission Control button (virtual code 160) or Fn+Space can activate the app. Standard F3 (code 99) is distinct. Both activation shortcuts open a fresh root when idle and close the overlay when active. Opening or reopening the application, or choosing Activate, requests a fresh root.
 
-The user canceled the separate Spotlight-button-to-Raycast request. The temporary built-in-keyboard AC Search → F13 mapping was removed and read back as empty, restoring the prior absence of custom mappings. Raycast's shortcut was never changed, and no persistence agent was created. QuadClicker has no Raycast integration.
+Fn+Space is recognized from the Space event’s SecondaryFn flag, rather than global modifier state, which can lag an event. Shift, Command, Option, and Control disqualify the chord. Caps Lock does not. The Mission Control event may also carry Function metadata.
 
-The overlay shows only the selected rectangle and its midpoint dot. Use a contrasting outline that remains visible on light and dark content. Redraw on state changes rather than running an animation loop. Put controls in the README, keeping the overlay and two-item menu uncluttered.
+A consumed press owns its down, repeats, and final up. Releasing Fn before Space therefore cannot leak the Space release. A Space press that began outside the shortcut remains owned by the target app; adding Fn during autorepeat cannot activate QuadClicker. Shift and Fn alone remain harmless prefixes while the overlay is active. Other modifier presses dismiss it. Escape always exits; keypad Enter retains native Enter behavior even when it carries Function metadata.
 
-| Key | Action |
-| --- | --- |
-| Mission Control button or Fn+Space | Open a fresh root when idle; hide when active |
-| U / I | Select top-left / top-right quarter |
-| J / K | Select bottom-left / bottom-right quarter |
-| Backspace | Return to parent; root is a no-op |
-| Shift+Backspace | Return to root |
-| Return or keypad Enter | Single left click at midpoint; keep selection and overlay |
-| Escape | Hide overlay |
-| Other key or unsupported shortcut | Hide overlay and pass the original event to the underlying app |
+Unrelated keys dismiss navigation immediately and pass the original event through. Dismissal clears pending commands, including clicks. A generation boundary prevents commands from an old activation from executing during a new one. Opening the app’s menu suspends navigation before AppKit handles menu keyboard input.
 
-Use physical U/I/J/K key positions for a predictable navigation cluster; document this. Allow Shift on quadrant keys; only unmodified Enter clicks. Command/Control/Option combinations dismiss the overlay and pass through, except Escape always exits and is consumed. Unrecognized key-down events also dismiss and pass through. Shift and Fn alone keep the overlay open and pass through. Fn must remain a harmless prefix so Fn+Space can close an active overlay. Command, Control, Option, and Caps Lock presses dismiss and pass through. Other Fn navigation combinations are unsupported and dismiss while passing their original key event through. Preserve Escape and native Enter keycode 76: keypad Enter may carry function metadata, and macOS may emit the same Enter event for Fn+Return. These retain their existing exit/click behavior without tracking physical Fn state. Ignore autorepeat for owned navigation commands: one physical press performs one action. A repeating key whose press began outside the overlay still belongs to the underlying app; its repeat dismisses and passes through.
+## Main thread and native lifetimes
 
-## Modules and ownership
+AppKit objects and event-tap state stay on the AppKit main thread and its Core Foundation run loop. Tap callbacks only classify input and queue small state transitions. One coalesced `CFRunLoopPerformBlock` drain applies UI changes or posts clicks after releasing mutable borrows. Weak controller references prevent pending work from resurrecting a terminated app.
 
-- `navigation`: validated finite positive rectangles, quadrant enum, root/parent history, midpoint, and subdivision limit. Store rectangles in logical points. The root is depth zero; allow nine subdivisions, then treat further direction presses as no-ops. Use one fixed `MAX_DEPTH` constant and derive depth from parent history, without a configurable flag or separate counter. Retain the one-point minimum child dimension. Backspace restores the previous depth, and reset restores the full root and its subdivision allowance.
-- `app`: native application/delegate, status menu, activation lifecycle, permission/error presentation, selected display, and ownership of native resources.
-- `overlay`: retained nonactivating borderless `NSPanel` and drawing view. Never key/main; clear background, non-opaque, no shadow, mouse-transparent, and visible while the app is inactive. Use public window levels and collection behavior for the active Space/full-screen companion behavior.
-- `input`: public filtering event tap, idle Mission Control/Fn+Space activation, active-session navigation, paired release tracking, plus synthetic mouse event creation/posting. Keep pointer and callback invariants documented at the native boundary. The physical-button activation belongs in the same small typed input policy; a Carbon F3 registration module is unnecessary.
-- A small display/coordinate helper may become its own module if needed; avoid a general plugin or backend abstraction.
+The callback context has a stable owned allocation. Teardown disables and invalidates the tap and removes its run-loop source before freeing that context. Native callbacks contain panic boundaries. Unsafe operations stay in small documented FFI blocks.
 
-Use a single AppKit main thread and its Core Foundation run loop. AppKit objects and event-tap state stay on that thread; no Tokio runtime or worker thread is needed. Register the tap source in common run-loop modes. Retain the application delegate, menu/status item, panel/view, tap and run-loop source for their complete lifetimes.
+A disabled-tap notification ends that tap. Failure is latched, held-key ownership is cleared, and the tap is removed before one error is presented. A later activation can create a fresh tap. Modal permission/error dialogs block overlapping activation.
 
-The callback context has a stable owned allocation. Its lifetime ends only after the tap is disabled/invalidated and its run-loop source removed. Keep callback work to input classification and a short state transition; release mutable borrows before any AppKit call. Queue actions in order and schedule one pending drain with `CFRunLoopPerformBlock` plus `CFRunLoopWakeUp`, using common modes. The next-turn drain releases queue/policy borrows before applying AppKit updates or posting clicks. Retain only weak controller references so pending work cannot resurrect a terminated app. This avoids a perpetual polling timer and its idle work/fixed latency. Do not display alerts or perform blocking work inside the event callback. Never let a Rust panic unwind across the native callback boundary.
+## Focus, clicks, and coordinates
 
-Keep a set of keys whose down event was consumed. Consume their repeats and final up event even if Escape or unrelated typing has already hidden the overlay or modifiers changed. Deactivate navigation handling immediately on Escape or an unrelated key-down; continue draining outstanding consumed releases while the tap remains available for both activation shortcuts. Releasing Fn before Space must not release ownership of the consumed Space press. A Space press that began without Fn stays owned by the target: adding Fn during autorepeat must not activate QuadClicker. An unrelated key never acquires ownership: forward its original event without synthesizing a replacement. Both dismissal paths clear queued actions, including pending clicks; a fresh activation cannot execute stale queued clicks. Opening the app's own status menu suspends navigation before menu keyboard handling.
+The overlay never takes keyboard focus. Intercepted navigation remains available after a click changes the foreground application.
 
-## Clicks, focus, and display coordinates
+Clicking first allocates mouse-move, mouse-down, and mouse-up events, then posts them in that order at the same midpoint. Flags are explicitly unmodified and the button events use a single-click count. Allocation completes before any event is posted, preventing a partial click on allocation failure. Movement matters for native views that cache pointer coordinates from motion events, including Ghostty. There are no retries or timing sleeps; a target may intentionally consume the first click to activate its window or pane.
 
-The panel remains non-key and click-through. A filtering `CGEventTap` consumes commands before they reach the target application. This preserves navigation after a click changes the foreground window, without repeatedly taking keyboard focus back.
+Displays are matched by ID between `NSScreen` and `CGDisplayBounds`. AppKit bottom-left coordinates are normalized within the selected screen and mapped to Quartz top-left bounds. Retina scaling is not applied to mouse coordinates. Display reconfiguration closes the overlay so stale geometry cannot click an unintended location; the next activation selects a fresh display.
 
-Create mouse-move, mouse-down, and mouse-up events before posting any; handle allocation failure before moving the pointer or emitting a partial click. Post movement followed by the matched button pair at the current midpoint with explicit unmodified flags and a single-click count on the button events. Native views such as Ghostty maintain an internal pointer position from movement events, so sending only button events can use stale terminal coordinates. Clicks do not change navigation state. Do not add retries, double clicks, or arbitrary timing sleeps to compensate for a target application's own first-click behavior.
+## Permissions and distribution
 
-Match `NSScreen` and `CGDisplayBounds` by display ID. Keep AppKit screen geometry and Quartz event coordinates distinct and convert at the boundary: for a selected screen's bottom-left AppKit point, derive its normalized local position and map into that display's top-left Quartz bounds. This handles negative origins and avoids multiplying by Retina scale. Use AppKit backing conversion only for crisp drawing. Close the active overlay when displays are reconfigured, so stale coordinates cannot click an unintended location; the next activation selects a fresh root.
+Accessibility consent is needed for the filtering tap and synthetic clicks. Startup makes one native consent request if necessary. Later Activate/reopen requests check permission and show an OK-only explanation when it is missing. The application does not automatically open Settings, poll consent, or request Screen Recording.
 
-## Permission and failure UX
+The bundle has a stable identifier (`sk.vladimirjancar.quadclicker`) and `LSUIElement` menu bar identity. Its icon is copied from `assets/QuadClicker.icns`; the menu bar uses a separate native symbol.
 
-Accessibility consent is required for the active filtering tap and synthetic clicks. A listen-only global keyboard monitor cannot suppress navigation keys. Do not request Screen Recording or automatically request Input Monitoring for this architecture.
+Public releases use free ad-hoc signing and are not notarized. Ad-hoc designated requirements depend on the binary hash, so updates can invalidate Accessibility grants. Local certificate-backed builds use an explicitly selected identity; a compatible default designated requirement can preserve consent across updates. There is no hardcoded personal signing identity, custom weakened identity rule, privacy-database modification, or automatic installation.
 
-Check Accessibility trust and event-posting access on launch and activation, then check actual tap creation. If startup finds Accessibility trust absent, keep navigation inactive and call `AXIsProcessTrustedWithOptions` with `kAXTrustedCheckOptionPrompt` set to `kCFBooleanTrue` once for that process, so macOS receives a permission request from the installed application. Its prompt is asynchronous; the immediate return value does not represent new consent. If startup finds Accessibility trusted but event posting unavailable, call `CGRequestPostEventAccess` instead. Never open System Settings automatically or stack an app-owned alert over the startup request. Later Activate/reopen actions recheck permission; if still denied, show one OK-only dialog explaining the manual settings path and exact installed bundle. Do not repeat the native request or poll. A revoked grant or tap failure hides the overlay and provides a recoverable error via the app UI. A disabled-tap notification is terminal for that tap: latch failure once, remove and invalidate the tap before presenting one error, and create a fresh tap on a later activation.
+## Validation
 
-Block activation while an app-owned modal setup/error dialog is presented, including activation arriving through the idle Mission Control tap. Restore that guard when the dialog exits, and preserve paired releases already consumed. When macOS disables the tap, end navigation and clear stale held-key ownership because releases may have been missed; normal Escape must continue preserving paired releases.
+The focused tests cover navigation, depth and minimum size, coordinate conversion, shortcut/modifier routing, repeat ownership, and dismissal. Run formatting, Clippy with warnings denied, tests, release compilation, and strict bundle signature verification.
 
-Exact README setup instructions:
+Unit tests do not prove OS event delivery. Hardware-dependent checks include the Mission Control button, Fn+Space opening/closing without leaked spaces, real clicks, retained focus, Accessibility recovery, and multi-display/full-screen placement. Native click and Mission Control activation have been exercised on an Apple Silicon MacBook; every external keyboard and display configuration is not covered.
 
-1. Build with `./scripts/build-app.sh`, quit any running QuadClicker, install with `ditto dist/QuadClicker.app /Applications/QuadClicker.app`, and launch with `open /Applications/QuadClicker.app`.
-2. Startup requests permission through macOS when needed. Manually open **System Settings > Privacy & Security > Accessibility**; the app does not redirect there automatically.
-3. Enable **QuadClicker**. If absent, press **+**, then **Command+Shift+G**, enter `/Applications`, select `QuadClicker.app`, and click **Open**. Authenticate if macOS asks.
-4. Choose **QuadClicker > Activate** from the menu bar, or reopen the app. If macOS requires a restart, quit QuadClicker from its menu and reopen it.
+## API references
 
-This is the Accessibility permission page under Privacy & Security, distinct from the general Accessibility settings section. Migration from the earlier ad-hoc build to certificate signing is expected to need one final grant for the installed copy. If its stale entry prevents granting access, remove only QuadClicker and add this exact bundle again; never reset all privacy permissions. Finder can reveal the installed bundle directly with `open -R /Applications/QuadClicker.app`.
-
-## Build and code quality
-
-Provide one readable `scripts/build-app.sh` that builds release mode, assembles `dist/QuadClicker.app/Contents`, copies its Info.plist and icon, then signs and verifies the bundle with the existing Apple Development identity `29DAC27BEFE42942098F6B2649091EEF5D89DD07`. Keep the normal certificate-backed designated requirement generated by `codesign`; do not weaken it with a custom identity rule. Use a constant bundle ID (`sk.vladimirjancar.quadclicker`), executable name, and `LSUIElement` menu bar identity. Quote paths and stop on failure. Commit Cargo.lock; ignore build outputs. After quitting the running app, install the built bundle with `ditto dist/QuadClicker.app /Applications/QuadClicker.app`; launch only the installed copy with `open /Applications/QuadClicker.app`.
-
-The previous ad-hoc signature identified one binary through a `cdhash` designated requirement. A rebuilt binary no longer satisfied the old privacy grant even at the same path and bundle ID. Signing subsequent builds with the same valid development identity and compatible default designated requirement addresses that cause; grant persistence was verified across a later signed update: the replacement installed process started one enabled active session event tap without another grant, and its log contained no permission failure. Future incompatible signing identities or revoked permission can still require consent. No new certificate, keychain trust policy, or privacy-database modification is needed.
-
-The app icon lives in `assets/QuadClicker.png` (1024×1024 with transparency) and `assets/QuadClicker.icns` (standard macOS sizes). Copy the ICNS to `Contents/Resources/QuadClicker.icns` and set `CFBundleIconFile` to `QuadClicker`. Its navy/teal quadrants, selected square, and midpoint dot were generated with the built-in imagegen tool, visually checked at full size and 32 pixels, and packaged with `sips`/`iconutil`. The prompt is recorded in `assets/README.md`; the menu bar continues to use its separate QC label.
-
-Use Rust 2024, an explicit supported Rust version, selected framework crate features, and straightforward `Result` propagation. Configure shared Rust/Clippy lints, including no production unwrap/expect. Deny unsafe by default and allow it only at documented macOS FFI operations; the user's preference against pointless flags takes precedence over adding a Cargo feature solely to permit required FFI. Keep unsafe blocks small with ownership/thread/lifetime safety comments. Use purpose-oriented comments for non-obvious design choices.
-
-## Acceptance
-
-Live acceptance on the user's Mac confirms the overlay, Enter-generated clicks, and physical Mission Control button activation. The latest unrelated-key dismissal and depth-nine limit have passed source review and the focused test suite; their installed-app behavior still needs checking after the updated bundle is installed. Do not treat those earlier live checks as coverage of the new changes.
-
-The installed movement-before-click update has passed source review and retained its Accessibility grant. Actual Ghostty click acceptance remains pending; source analysis establishes its cached-coordinate behavior, but does not prove live delivery. A read-only hardware probe confirmed Fn+Space’s event flags; the new activation alias still requires installed-app acceptance. Check opening and closing, unchanged plain Space, held-key repeats, and releasing Fn before Space.
-
-Retain a small suite of roughly 6–10 meaningful tests covering navigation paths/undo/reset, bounds and minimum size, midpoint/coordinate conversion across negative and mixed-scale display layouts, modifier/repeat routing, paired releases across Escape, and click preserving selection. Do not add a test per trivial accessor.
-
-Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, release build, and bundle signature verification. Inspect the actual desktop overlay and verify real clicks against a harmless target where permission allows: launch/reopen/Activate, all quadrants, parent/root, repeated Enter, Escape then normal typing, foreground focus, menu interaction, Retina placement, permission denied, and permission recovery. Check full-screen Spaces and additional displays when available. Report unavailable hardware/permission-dependent checks explicitly; compilation and unit tests do not prove OS event delivery. Miri cannot validate AppKit/Core Graphics calls; any Miri check is limited to extracted pure logic rather than presented as native FFI proof.
-
-With the user's existing keyboard settings intact, physically press the Mission Control icon button and verify that QuadClicker opens while Mission Control does not. Verify brightness and volume still respond directly and the Spotlight button passes through. Check Fn+Space as the alternate toggle while unrelated Fn combinations retain their original system delivery. Check repeat/release behavior and activation again after Escape. A temporary read-only diagnostic may establish the actual event path when necessary; do not retain a general key logger or log typed content. Synthetic keycode-160 tests only verify routing, not hardware delivery or suppression.
-
-## API evidence
-
-- [Rust AppKit bindings](https://docs.rs/objc2-app-kit/latest/objc2_app_kit/struct.NSPanel.html) and [Core Graphics event bindings](https://docs.rs/objc2-core-graphics/latest/objc2_core_graphics/struct.CGEvent.html).
-- [Apple: mouse-transparent windows](https://developer.apple.com/documentation/appkit/nswindow/ignoresmouseevents?language=objc) and [event filtering callback contract](https://developer.apple.com/documentation/coregraphics/cgeventtapcallback?language=objc).
-- [Apple: filtering versus listening permissions](https://developer.apple.com/videos/play/wwdc2019/701/) and [Accessibility permission setup](https://support.apple.com/guide/mac-help/mh43185/mac).
-- [Apple: global display bounds](https://developer.apple.com/documentation/coregraphics/cgdisplaybounds%28_%3A%29?language=objc) and [point/backing coordinate guidance](https://developer.apple.com/library/archive/documentation/GraphicsAnimation/Conceptual/HighResolutionOSX/APIs/APIs.html).
-- [Apple keyboard source: virtual 0xA0 is Expose All](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDKeyboard.cpp#L729). The physical activation path was also confirmed by the user on this Mac.
-- [Apple: designated requirements and privacy grants](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) explains why ad-hoc identity changes across builds and how certificate-backed identity identifies compatible updates.
+- [Apple: event filtering callback contract](https://developer.apple.com/documentation/coregraphics/cgeventtapcallback?language=objc).
+- [Apple: mouse-transparent windows](https://developer.apple.com/documentation/appkit/nswindow/ignoresmouseevents?language=objc).
+- [Apple: global display bounds](https://developer.apple.com/documentation/coregraphics/cgdisplaybounds%28_%3A%29?language=objc).
+- [Apple keyboard source: virtual 0xA0 is Expose All](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDKeyboard.cpp#L729).
+- [Apple: designated requirements and privacy grants](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+- [Apple: opening apps downloaded outside the App Store](https://support.apple.com/en-us/102445).
+- [Apple: Accessibility permission setup](https://support.apple.com/guide/mac-help/mh43185/mac).

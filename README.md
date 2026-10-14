@@ -1,47 +1,75 @@
 # QuadClicker
 
-A native macOS menu bar app that selects a point by repeatedly dividing the screen into four rectangles. Rust manages the navigation; AppKit draws the overlay and Core Graphics delivers clicks.
+A small macOS app for clicking with your keyboard. Choose a quarter of the screen, keep narrowing it, and press Enter to click the centre dot. Built in Rust with native AppKit and Core Graphics APIs.
 
-## Build and run
+## Download and install
 
-Requires macOS 13 or newer, a Rust toolchain, and this Mac's configured Apple Development signing identity. From this directory:
+[Download the latest release](https://github.com/Vl4dk0/quadclicker/releases/latest). The first release supports **Apple Silicon (arm64), macOS 13 or newer**. Intel builds are not provided.
 
-```sh
-./scripts/build-app.sh
-ditto dist/QuadClicker.app /Applications/QuadClicker.app
-open /Applications/QuadClicker.app
-```
+1. Download and unzip the app archive, then move **QuadClicker.app** into **Applications**.
+2. Open it. This free release is ad-hoc signed and is **not notarized by Apple**. If macOS blocks it as an unidentified developer, follow [Apple’s opening instructions](https://support.apple.com/en-us/102445): after trying to open it, go to **System Settings → Privacy & Security → Open Anyway**, then confirm **Open** if you trust the download.
+3. Go to **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is missing, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if asked.
+4. Choose **Activate** from QuadClicker’s menu bar menu, or quit and reopen the app after granting permission.
 
-The build produces a signed app at `dist/QuadClicker.app`; the next command installs it in `/Applications`. Run that installed copy for a consistent app identity. Quit QuadClicker before installing an updated build. The script uses this Mac's existing Apple Development certificate and fails if it is unavailable; it does not fall back to ad-hoc signing.
+Accessibility permission lets QuadClicker intercept its controls and send mouse clicks. No Screen Recording permission is needed. [Apple’s Accessibility guide](https://support.apple.com/guide/mac-help/mh43185/mac) explains the permission.
 
-## Accessibility permission
+## Controls
 
-On first launch, macOS may prompt for Accessibility access. Open **System Settings → Privacy & Security → Accessibility** and enable **QuadClicker**. If it is absent, click **+**, press **Command+Shift+G**, enter `/Applications/QuadClicker.app`, and click **Open**. Authenticate if macOS asks. Turn on its switch, then choose **Activate** from QuadClicker's menu bar menu, or reopen the app. If macOS requires a restart, choose **Quit** from its menu and reopen it.
+Press **Fn+Space** or your keyboard’s **Mission Control icon button** to open or close the overlay. The Mission Control button is often in the F3 position; standard F3 is a different event. This has been tested on an Apple Silicon MacBook keyboard. Brightness and volume keys retain their normal behavior. You can also choose **Activate** from the menu.
 
-No Screen Recording permission is needed. Switching from an earlier ad-hoc build to the certificate-signed app requires granting permission again once. If macOS no longer recognizes the permission, remove the stale QuadClicker entry, add `/Applications/QuadClicker.app`, and reopen it.
-
-## Navigation
-
-Opening QuadClicker activates the overlay. Choose **Activate** from its menu bar menu, or reopen the app, to start again at the whole display. Escape hides the overlay; **Quit** exits the app.
-
-Press the physical Mission Control button or **Fn+Space** to open or close the overlay. The keyboard's normal brightness and volume behavior stays unchanged. Double Option activation is deferred.
-
-Each direction selects one quarter of the current rectangle:
+The overlay starts on the display containing the pointer. Each direction selects one quarter of the current rectangle:
 
 ```text
 U: top left       I: top right
 J: bottom left    K: bottom right
 ```
 
-Navigation allows at most nine subdivisions; further quadrant presses leave the rectangle unchanged until you go back or reset.
-
 | Key | Action |
 | --- | --- |
-| Backspace | Return to the previous rectangle |
+| Backspace | Go back one rectangle |
 | Shift+Backspace | Return to the whole display |
-| Enter | Left-click at the centre dot; keep the current rectangle |
+| Enter | Left-click at the centre dot; keep the selection |
 | Escape | Hide the overlay |
+| Other key or unsupported shortcut | Hide the overlay and pass the key to the app underneath |
 
-The starting rectangle is the display containing the pointer. The overlay lets mouse clicks pass through to the app beneath it.
+You can subdivide up to **nine times**. Navigation uses the physical U/I/J/K key positions, independent of keyboard layout. Holding a key does not repeat actions. Shift or Fn alone keeps the overlay open; Shift is allowed on direction keys. Enter clicks without modifiers (native keypad Enter is also supported).
 
-Navigation uses the physical U/I/J/K positions, independent of keyboard layout. Hold Shift if desired; Enter clicks only without modifiers. Other keys or unsupported shortcuts hide the overlay and pass through to the app underneath; Shift or Fn alone leaves it open. Holding a key does not repeat actions. Escape always hides the overlay.
+The overlay stays out of keyboard focus and lets physical mouse clicks pass through. **Quit** in the menu exits QuadClicker.
+
+## Updates and limitations
+
+Quit QuadClicker before replacing its app bundle. Because free ad-hoc signing identifies each build separately, an update may require granting Accessibility permission again. If macOS stops recognizing the grant, remove only the stale **QuadClicker** entry, add `/Applications/QuadClicker.app` again, and reopen it.
+
+An application may use the first click to activate its window or pane. Multi-display and full-screen behavior has not been tested on every configuration. Activation depends on the keyboard events macOS delivers; external keyboards may differ.
+
+## Build from source
+
+Requires macOS, Rust 1.85 or newer, and Apple’s Command Line Tools (`xcode-select --install` if missing).
+
+```sh
+git clone https://github.com/Vl4dk0/quadclicker.git
+cd quadclicker
+QUADCLICKER_SIGNING_IDENTITY=- ./scripts/build-app.sh
+```
+
+The result is `dist/QuadClicker.app`. Quit any installed copy, move the built app into Applications, and follow the permission instructions above. Ad-hoc signing (`-`) needs no Apple Developer account.
+
+For your own certificate-backed local builds, set `QUADCLICKER_SIGNING_IDENTITY` to an existing code-signing identity instead. Keeping the same certificate and compatible designated requirement across updates can preserve Accessibility consent; switching signing identities may require consent again. The build script never chooses a private certificate or installs the app automatically.
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+To create the Apple Silicon release archive and SHA-256 checksum without installing it:
+
+```sh
+./scripts/package-release.sh
+```
+
+Artifacts are written to `target/releases/v0.1.0/`.
+
+Released under the [MIT license](LICENSE).
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the module boundaries and native API design, and [assets/README.md](assets/README.md) for icon provenance.
