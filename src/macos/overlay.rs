@@ -28,6 +28,7 @@ define_class!(
             NSRectFillUsingOperation(dirty, NSCompositingOperation::Copy);
             let state = self.ivars().get();
             draw_grid(state);
+            draw_quadtree_guide(state);
             draw_destination_hints(state);
             draw_mode_badge(state);
             // The selected target stays visible even inside the mode badge.
@@ -105,12 +106,32 @@ fn draw_grid(state: OverlayState) {
         grid.moveToPoint(NSPoint::new(state.root.x, y));
         grid.lineToPoint(NSPoint::new(state.root.x + state.root.width, y));
     }
+    stroke_context_lines(&grid);
+}
+
+// Only the next four choices matter; keep their boundaries inside the current
+// selection rather than retaining a trail of earlier subdivisions.
+fn draw_quadtree_guide(state: OverlayState) {
+    if !state.quadtree_can_subdivide {
+        return;
+    }
+    let rect = state.selection;
+    let center = rect.midpoint();
+    let guide = NSBezierPath::bezierPath();
+    guide.moveToPoint(NSPoint::new(center.x, rect.y));
+    guide.lineToPoint(NSPoint::new(center.x, rect.y + rect.height));
+    guide.moveToPoint(NSPoint::new(rect.x, center.y));
+    guide.lineToPoint(NSPoint::new(rect.x + rect.width, center.y));
+    stroke_context_lines(&guide);
+}
+
+fn stroke_context_lines(lines: &NSBezierPath) {
     NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, 0.35).setStroke();
-    grid.setLineWidth(0.5);
-    grid.stroke();
+    lines.setLineWidth(0.5);
+    lines.stroke();
     NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.45).setStroke();
-    grid.setLineWidth(0.25);
-    grid.stroke();
+    lines.setLineWidth(0.25);
+    lines.stroke();
 }
 
 fn draw_selection(rect: Rect) {

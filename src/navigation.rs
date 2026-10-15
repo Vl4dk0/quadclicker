@@ -24,6 +24,7 @@ pub struct OverlayState {
     pub root: Rect,
     pub mode: NavigationMode,
     pub grid_divisions: Option<u16>,
+    pub quadtree_can_subdivide: bool,
     pub destination_hints: [Option<DestinationHint>; 4],
 }
 
@@ -125,13 +126,16 @@ impl Selection {
         self.current
     }
     pub fn descend(&mut self, quadrant: Quadrant) {
-        if self.parents.len() >= MAX_DEPTH {
+        if !self.can_subdivide() {
             return;
         }
         if let Some(child) = self.current.quarter(quadrant) {
             self.parents.push(self.current);
             self.current = child;
         }
+    }
+    fn can_subdivide(&self) -> bool {
+        self.parents.len() < MAX_DEPTH && self.current.quarter(Quadrant::TopLeft).is_some()
     }
     pub fn back(&mut self) {
         if let Some(parent) = self.parents.pop() {
@@ -290,6 +294,8 @@ impl Navigation {
             mode: self.mode,
             grid_divisions: (self.mode == NavigationMode::Grid)
                 .then_some(self.grid.state.divisions),
+            quadtree_can_subdivide: self.mode == NavigationMode::Quadtree
+                && self.quadtree.can_subdivide(),
             destination_hints: if show_hints {
                 self.destination_hints()
             } else {
@@ -305,7 +311,7 @@ impl Navigation {
         std::array::from_fn(|index| {
             let destination = match self.mode {
                 NavigationMode::Quadtree => {
-                    if self.quadtree.parents.len() >= MAX_DEPTH {
+                    if !self.quadtree.can_subdivide() {
                         return None;
                     }
                     let quadrant = [
@@ -426,6 +432,10 @@ mod tests {
         for mode in [NavigationMode::Quadtree, NavigationMode::Grid] {
             let mut navigation = Navigation::new_in_mode(root, mode);
             let before = navigation.current();
+            assert_eq!(
+                navigation.overlay_state(false).quadtree_can_subdivide,
+                mode == NavigationMode::Quadtree
+            );
             assert_eq!(navigation.overlay_state(false).destination_hints, [None; 4]);
             let hints = navigation.overlay_state(true).destination_hints;
             assert_eq!(navigation.current(), before);
@@ -463,6 +473,7 @@ mod tests {
                         navigation.descend(Quadrant::TopLeft);
                     }
                     assert_eq!(navigation.overlay_state(true).destination_hints, [None; 4]);
+                    assert!(!navigation.overlay_state(false).quadtree_can_subdivide);
                 }
                 NavigationMode::Grid => {
                     navigation.resize_grid(false);
@@ -490,6 +501,11 @@ mod tests {
         assert_eq!(
             Navigation::new(tiny).overlay_state(true).destination_hints,
             [None; 4]
+        );
+        assert!(
+            !Navigation::new_in_mode(tiny, NavigationMode::Quadtree)
+                .overlay_state(false)
+                .quadtree_can_subdivide
         );
     }
 
