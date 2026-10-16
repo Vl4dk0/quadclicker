@@ -4,7 +4,7 @@ use super::{
     overlay::Overlay,
     permissions, scheduling,
 };
-use crate::navigation::{GridDensity, Navigation, NavigationMode};
+use crate::navigation::{GridDensity, GridTarget, Navigation, NavigationMode};
 use crate::routing::Command;
 use anyhow::{Context, Result};
 use objc2::rc::Retained;
@@ -15,8 +15,8 @@ use objc2_app_kit::{
     NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSSize, NSUserDefaults,
-    ns_string,
+    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSSize, NSString,
+    NSUserDefaults, ns_string,
 };
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -66,6 +66,55 @@ fn save_grid_density(density: GridDensity) {
     }
 }
 
+/// Only snapshots of a visible grid are retained; the inactive grid geometry in
+/// a quadtree session must never replace the user's last grid location.
+#[derive(Clone, Debug, PartialEq)]
+struct GridMemory {
+    density: GridDensity,
+    target: GridTarget,
+    display: Option<String>,
+}
+
+fn load_grid_memory() -> Option<GridMemory> {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let number = |key: &NSString| {
+        defaults
+            .objectForKey(key)?
+            .downcast::<NSNumber>()
+            .ok()
+            .map(|value| value.doubleValue())
+    };
+    Some(GridMemory {
+        density: load_grid_density(),
+        target: GridTarget::from_preference(
+            number(ns_string!("gridTargetX"))?,
+            number(ns_string!("gridTargetY"))?,
+        )?,
+        display: defaults
+            .stringForKey(ns_string!("gridDisplayUUID"))
+            .map(|value| value.to_string()),
+    })
+}
+
+fn save_grid_memory(memory: &GridMemory) {
+    save_grid_density(memory.density);
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let point = memory.target.point();
+    defaults.setDouble_forKey(point.x, ns_string!("gridTargetX"));
+    defaults.setDouble_forKey(point.y, ns_string!("gridTargetY"));
+    if let Some(display) = memory.display.as_deref() {
+        // SAFETY: NSString is a property-list value and lives throughout the setter.
+        unsafe {
+            defaults.setObject_forKey(
+                Some(&NSString::from_str(display)),
+                ns_string!("gridDisplayUUID"),
+            )
+        };
+    } else {
+        defaults.removeObjectForKey(ns_string!("gridDisplayUUID"));
+    }
+}
+
 fn load_hints() -> bool {
     NSUserDefaults::standardUserDefaults()
         .stringForKey(ns_string!("destinationHints"))
@@ -104,6 +153,7 @@ pub(super) struct Controller {
     dispatch: Rc<Dispatch>,
     tap: RefCell<Option<EventTap>>,
     session: RefCell<Option<Session>>,
+    grid_memory: RefCell<Option<GridMemory>>,
     menu_open: Cell<bool>,
     activation_requested: Cell<bool>,
     shutting_down: Cell<bool>,
@@ -116,6 +166,7 @@ impl Controller {
             dispatch: Dispatch::new(weak.clone()),
             tap: RefCell::new(None),
             session: RefCell::new(None),
+            grid_memory: RefCell::new(load_grid_memory()),
             menu_open: Cell::new(false),
             activation_requested: Cell::new(false),
             shutting_down: Cell::new(false),
@@ -164,9 +215,27 @@ impl Controller {
         }
     }
     fn start_session(&self) -> Result<()> {
-        let display = Display::under_pointer(self.mtm)?;
-        let navigation = Navigation::new_in_mode(display.local_bounds()?, self.dispatch.mode())
-            .with_grid_density(load_grid_density());
+        let memory = self.grid_memory.borrow();
+        let mode = self.dispatch.mode();
+        let display = if mode == NavigationMode::Grid {
+            Display::restore(
+                self.mtm,
+                memory.as_ref().and_then(|memory| memory.display.as_deref()),
+            )?
+        } else {
+            Display::under_pointer(self.mtm)?
+        };
+        let density = memory
+            .as_ref()
+            .map_or_else(load_grid_density, |memory| memory.density);
+        let mut navigation =
+            Navigation::new_in_mode(display.local_bounds()?, mode).with_grid_density(density);
+        if mode == NavigationMode::Grid {
+            if let Some(memory) = memory.as_ref() {
+                navigation = navigation.with_grid_target(memory.target);
+            }
+        }
+        drop(memory);
         let overlay = Overlay::new(
             self.mtm,
             display,
@@ -198,10 +267,25 @@ impl Controller {
         // deliver AppKit notifications synchronously.
         let session = self.session.borrow_mut().take();
         if let Some(session) = session.as_ref() {
-            save_grid_density(session.navigation.grid_density());
+            self.remember_grid(session);
         }
         drop(session);
     }
+    fn remember_grid(&self, session: &Session) {
+        let Some(target) = session.navigation.grid_target() else {
+            return;
+        };
+        let memory = GridMemory {
+            density: session.navigation.grid_density(),
+            target,
+            display: session.display.identity(),
+        };
+        if self.grid_memory.borrow().as_ref() != Some(&memory) {
+            save_grid_memory(&memory);
+            *self.grid_memory.borrow_mut() = Some(memory);
+        }
+    }
+
     pub(super) fn drain(&self) {
         let actions = self.dispatch.take_actions();
         for (generation, action) in actions {
@@ -270,7 +354,9 @@ impl Controller {
                     .adjacent(self.mtm, command == Command::NextDisplay)?;
                 if display != session.display {
                     session.navigation.rebase(display.local_bounds()?);
-                    if session.navigation.grid_density() != previous_density {
+                    if session.navigation.grid_target().is_some()
+                        && session.navigation.grid_density() != previous_density
+                    {
                         save_grid_density(session.navigation.grid_density());
                     }
                     session.display = display;
@@ -289,6 +375,7 @@ impl Controller {
             Command::Refresh => {}
             Command::ResizeGrid { refine } => session.navigation.resize_grid(refine),
             Command::SwitchMode(mode) => {
+                self.remember_grid(session);
                 session.navigation.switch_mode(mode);
                 save_mode(mode);
             }
@@ -304,7 +391,9 @@ impl Controller {
             }
             Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
         }
-        if session.navigation.grid_density() != previous_density {
+        if session.navigation.grid_target().is_some()
+            && session.navigation.grid_density() != previous_density
+        {
             save_grid_density(session.navigation.grid_density());
         }
         session.overlay.update(

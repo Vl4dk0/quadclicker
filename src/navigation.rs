@@ -27,6 +27,21 @@ impl GridDensity {
     }
 }
 
+/// A display-independent cell center, validated before preference data enters geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridTarget(Point);
+
+impl GridTarget {
+    pub fn from_preference(x: f64, y: f64) -> Option<Self> {
+        (x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y))
+            .then_some(Self(Point { x, y }))
+    }
+
+    pub fn point(self) -> Point {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NavigationMode {
     Quadtree,
@@ -302,7 +317,7 @@ impl Navigation {
         }
     }
 
-    /// New overlays start at the center; callers can restore the preferred density.
+    /// Quadtree starts at its root; grid preferences can restore a prior target.
     pub fn new_in_mode(root: Rect, mode: NavigationMode) -> Self {
         let mut navigation = Self::new(root);
         navigation.mode = mode;
@@ -312,6 +327,26 @@ impl Navigation {
     pub fn with_grid_density(mut self, density: GridDensity) -> Self {
         self.grid.center_on_grid(density.divisions());
         self
+    }
+
+    pub fn with_grid_target(mut self, target: GridTarget) -> Self {
+        let point = target.point();
+        self.grid.select_at(Point {
+            x: self.root.x + point.x * self.root.width,
+            y: self.root.y + point.y * self.root.height,
+        });
+        self
+    }
+
+    pub fn grid_target(&self) -> Option<GridTarget> {
+        if self.mode != NavigationMode::Grid {
+            return None;
+        }
+        let target = self.grid.current().midpoint();
+        GridTarget::from_preference(
+            (target.x - self.root.x) / self.root.width,
+            (target.y - self.root.y) / self.root.height,
+        )
     }
 
     pub fn grid_density(&self) -> GridDensity {
@@ -727,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_sessions_restore_density_and_mode_but_not_targets() {
+    fn fresh_sessions_restore_grid_preferences_but_quadtree_starts_at_root() {
         let Some(root) = Rect::new(0.0, 0.0, 1024.0, 768.0) else {
             panic!("valid fixture")
         };
@@ -741,12 +776,47 @@ mod tests {
             .with_grid_density(previous.grid_density());
         assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(64));
         assert!(reopened.current().contains(root.midpoint()));
+        let Some(target) = previous.grid_target() else {
+            panic!("grid target")
+        };
+        let restored = Navigation::new_in_mode(root, NavigationMode::Grid)
+            .with_grid_density(previous.grid_density())
+            .with_grid_target(target);
+        assert_eq!(restored.current(), previous.current());
+        let Some(shifted) = Rect::new(-1920.0, -1080.0, 1920.0, 1080.0) else {
+            panic!("valid bounds")
+        };
+        let scaled = Navigation::new_in_mode(shifted, NavigationMode::Grid)
+            .with_grid_density(previous.grid_density())
+            .with_grid_target(target);
+        assert_eq!(scaled.grid_target(), Some(target));
+        for (x, y) in [
+            (f64::NAN, 0.5),
+            (0.5, f64::INFINITY),
+            (-0.1, 0.5),
+            (0.5, 1.1),
+        ] {
+            assert!(GridTarget::from_preference(x, y).is_none());
+        }
+        let Some(boundary) = GridTarget::from_preference(1.0, 0.0) else {
+            panic!("valid target")
+        };
+        let edge = Navigation::new_in_mode(root, NavigationMode::Grid).with_grid_target(boundary);
+        assert_eq!(edge.grid.state.column, 31);
+        assert_eq!(edge.grid.state.row, 0);
 
         previous.switch_mode(NavigationMode::Quadtree);
         previous.descend(Quadrant::TopLeft);
         let mut reopened = Navigation::new_in_mode(root, NavigationMode::Quadtree)
             .with_grid_density(previous.grid_density());
         assert_eq!(reopened.current(), root);
+        assert_eq!(reopened.grid_target(), None);
+        assert_eq!(
+            Navigation::new_in_mode(root, NavigationMode::Quadtree)
+                .with_grid_target(target)
+                .current(),
+            root
+        );
         assert_eq!(reopened.overlay_state(false, 1).grid_divisions, None);
         reopened.switch_mode(NavigationMode::Grid);
         assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(64));

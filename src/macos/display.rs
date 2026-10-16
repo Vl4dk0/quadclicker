@@ -2,8 +2,16 @@ use crate::navigation::{Point, Rect, event_point};
 use anyhow::{Context, Result};
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSScreen;
+use objc2_core_foundation::{CFRetained, CFUUID};
 use objc2_core_graphics::{CGDisplayBounds, CGEvent};
 use objc2_foundation::{NSNumber, NSRect, ns_string};
+use std::ptr::NonNull;
+
+// ColorSync exposes the public persistent identifier for a connected display.
+#[link(name = "ColorSync", kind = "framework")]
+unsafe extern "C-unwind" {
+    fn CGDisplayCreateUUIDFromDisplayID(display: u32) -> Option<NonNull<CFUUID>>;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Display {
@@ -26,6 +34,32 @@ impl Display {
             })
             .context("the pointer is not on an available display")
     }
+    pub fn identity(self) -> Option<String> {
+        // SAFETY: The public function takes a numeric display ID and returns an
+        // owned CFUUID following the Create rule; CFRetained releases it once.
+        let uuid = unsafe { CGDisplayCreateUUIDFromDisplayID(self.id) }?;
+        // SAFETY: The non-null Create result carries exactly one owned retain.
+        let uuid = unsafe { CFRetained::from_raw(uuid) };
+        CFUUID::new_string(None, Some(&uuid)).map(|value| value.to_string())
+    }
+
+    pub fn restore(mtm: MainThreadMarker, identity: Option<&str>) -> Result<Self> {
+        let displays = Self::all(mtm)?;
+        if let Some(display) = identity.and_then(|identity| {
+            displays
+                .iter()
+                .find(|display| display.identity().as_deref() == Some(identity))
+        }) {
+            return Ok(*display);
+        }
+        Self::under_pointer(mtm).or_else(|_| {
+            displays
+                .first()
+                .copied()
+                .context("no display is currently available")
+        })
+    }
+
     fn all(mtm: MainThreadMarker) -> Result<Vec<Self>> {
         NSScreen::screens(mtm)
             .iter()
