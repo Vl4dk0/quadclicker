@@ -3,6 +3,30 @@
 pub const MAX_DEPTH: usize = 9;
 const MAX_GRID_DIVISIONS: u16 = 512;
 
+/// Only powers of two can be reached by refining or merging the grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridDensity(u16);
+
+impl Default for GridDensity {
+    fn default() -> Self {
+        Self(32)
+    }
+}
+
+impl GridDensity {
+    pub fn from_preference(value: isize) -> Self {
+        u16::try_from(value)
+            .ok()
+            .filter(|value| value.is_power_of_two() && *value <= MAX_GRID_DIVISIONS)
+            .map(Self)
+            .unwrap_or_default()
+    }
+
+    pub fn divisions(self) -> u16 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NavigationMode {
     Quadtree,
@@ -184,7 +208,7 @@ impl GridSelection {
                 row: 0,
             },
         };
-        selection.center_on_grid(2);
+        selection.center_on_grid(GridDensity::default().divisions());
         selection
     }
 
@@ -278,11 +302,20 @@ impl Navigation {
         }
     }
 
-    /// A new overlay remembers only its mode, never a previous target or density.
+    /// New overlays start at the center; callers can restore the preferred density.
     pub fn new_in_mode(root: Rect, mode: NavigationMode) -> Self {
         let mut navigation = Self::new(root);
         navigation.mode = mode;
         navigation
+    }
+
+    pub fn with_grid_density(mut self, density: GridDensity) -> Self {
+        self.grid.center_on_grid(density.divisions());
+        self
+    }
+
+    pub fn grid_density(&self) -> GridDensity {
+        GridDensity(self.grid.state.divisions)
     }
 
     pub fn current(&self) -> Rect {
@@ -525,7 +558,9 @@ mod tests {
                     assert!(!navigation.overlay_state(false, 1).quadtree_can_subdivide);
                 }
                 NavigationMode::Grid => {
-                    navigation.resize_grid(false);
+                    while navigation.grid_density().divisions() > 1 {
+                        navigation.resize_grid(false);
+                    }
                     assert_eq!(
                         navigation.overlay_state(true, 1).destination_hints,
                         [None; 4]
@@ -642,7 +677,7 @@ mod tests {
         let Some(root) = Rect::new(-100.0, 20.0, 800.0, 600.0) else {
             panic!("valid fixture")
         };
-        let mut navigation = Navigation::new(root);
+        let mut navigation = Navigation::new(root).with_grid_density(GridDensity(2));
         navigation.switch_mode(NavigationMode::Grid);
         assert_eq!(
             navigation.grid.state,
@@ -692,30 +727,51 @@ mod tests {
     }
 
     #[test]
-    fn fresh_sessions_restore_mode_without_restoring_navigation() {
+    fn fresh_sessions_restore_density_and_mode_but_not_targets() {
         let Some(root) = Rect::new(0.0, 0.0, 1024.0, 768.0) else {
             panic!("valid fixture")
         };
         let mut previous = Navigation::new_in_mode(root, NavigationMode::Grid);
-        for _ in 0..4 {
-            previous.resize_grid(true);
-        }
-        previous.move_cell(Direction::Up);
-        assert_eq!(previous.overlay_state(false, 1).grid_divisions, Some(32));
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false, 1).mode);
-        assert_eq!(reopened.overlay_state(false, 1).mode, NavigationMode::Grid);
-        assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(2));
+        assert_eq!(previous.grid_density().divisions(), 32);
+        previous.resize_grid(true);
+        previous.move_cells(-12, 8);
+        assert_eq!(previous.grid_density().divisions(), 64);
+        assert!(!previous.current().contains(root.midpoint()));
+        let reopened = Navigation::new_in_mode(root, NavigationMode::Grid)
+            .with_grid_density(previous.grid_density());
+        assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(64));
         assert!(reopened.current().contains(root.midpoint()));
 
         previous.switch_mode(NavigationMode::Quadtree);
         previous.descend(Quadrant::TopLeft);
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false, 1).mode);
-        assert_eq!(
-            reopened.overlay_state(false, 1).mode,
-            NavigationMode::Quadtree
-        );
+        let mut reopened = Navigation::new_in_mode(root, NavigationMode::Quadtree)
+            .with_grid_density(previous.grid_density());
         assert_eq!(reopened.current(), root);
         assert_eq!(reopened.overlay_state(false, 1).grid_divisions, None);
+        reopened.switch_mode(NavigationMode::Grid);
+        assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(64));
+        assert!(reopened.current().contains(root.midpoint()));
+        reopened.reset();
+        let reset = Navigation::new_in_mode(root, NavigationMode::Grid)
+            .with_grid_density(reopened.grid_density());
+        assert_eq!(reset.overlay_state(false, 1).grid_divisions, Some(2));
+
+        for invalid in [isize::MIN, -1, 0, 3, 33, 513, 1024, isize::MAX] {
+            assert_eq!(GridDensity::from_preference(invalid).divisions(), 32);
+        }
+        for valid in [1, 2, 32, 64, 512] {
+            assert_eq!(
+                GridDensity::from_preference(valid).divisions(),
+                valid as u16
+            );
+        }
+        let Some(small) = Rect::new(0.0, 0.0, 17.0, 9.0) else {
+            panic!("valid fixture")
+        };
+        let clamped = Navigation::new_in_mode(small, NavigationMode::Grid)
+            .with_grid_density(GridDensity::from_preference(512));
+        assert_eq!(clamped.grid_density().divisions(), 8);
+        assert!(clamped.current().width >= 1.0 && clamped.current().height >= 1.0);
     }
 
     #[test]
@@ -750,7 +806,7 @@ mod tests {
         let Some(root) = Rect::new(0.0, 0.0, 800.0, 600.0) else {
             panic!("valid fixture")
         };
-        let mut navigation = Navigation::new(root);
+        let mut navigation = Navigation::new(root).with_grid_density(GridDensity(2));
         navigation.switch_mode(NavigationMode::Grid);
         assert_eq!(navigation.overlay_state(false, 1).grid_divisions, Some(2));
         navigation.move_cell(Direction::Left);
@@ -782,7 +838,7 @@ mod tests {
         let Some(destination) = Rect::new(0.0, 0.0, 2048.0, 1536.0) else {
             panic!("valid fixture")
         };
-        let mut navigation = Navigation::new(root);
+        let mut navigation = Navigation::new(root).with_grid_density(GridDensity(2));
         navigation.descend(Quadrant::TopRight);
         navigation.descend(Quadrant::BottomLeft);
         let target = navigation.current().midpoint();

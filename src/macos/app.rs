@@ -4,7 +4,7 @@ use super::{
     overlay::Overlay,
     permissions, scheduling,
 };
-use crate::navigation::{Navigation, NavigationMode};
+use crate::navigation::{GridDensity, Navigation, NavigationMode};
 use crate::routing::Command;
 use anyhow::{Context, Result};
 use objc2::rc::Retained;
@@ -49,6 +49,20 @@ fn save_mode(mode: NavigationMode) {
         // SAFETY: NSString is a supported property-list value, and both objects
         // remain valid throughout the synchronous defaults setter.
         unsafe { defaults.setObject_forKey(Some(value), ns_string!("navigationMode")) };
+    }
+}
+
+fn load_grid_density() -> GridDensity {
+    GridDensity::from_preference(
+        NSUserDefaults::standardUserDefaults().integerForKey(ns_string!("gridDivisions")),
+    )
+}
+
+fn save_grid_density(density: GridDensity) {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let divisions = density.divisions() as isize;
+    if defaults.integerForKey(ns_string!("gridDivisions")) != divisions {
+        defaults.setInteger_forKey(divisions, ns_string!("gridDivisions"));
     }
 }
 
@@ -151,7 +165,8 @@ impl Controller {
     }
     fn start_session(&self) -> Result<()> {
         let display = Display::under_pointer(self.mtm)?;
-        let navigation = Navigation::new_in_mode(display.local_bounds()?, self.dispatch.mode());
+        let navigation = Navigation::new_in_mode(display.local_bounds()?, self.dispatch.mode())
+            .with_grid_density(load_grid_density());
         let overlay = Overlay::new(
             self.mtm,
             display,
@@ -182,6 +197,9 @@ impl Controller {
         // Drop after releasing the borrow: ordering a native window out can
         // deliver AppKit notifications synchronously.
         let session = self.session.borrow_mut().take();
+        if let Some(session) = session.as_ref() {
+            save_grid_density(session.navigation.grid_density());
+        }
         drop(session);
     }
     pub(super) fn drain(&self) {
@@ -244,6 +262,7 @@ impl Controller {
                 "The display configuration changed. Activate again to select the current display."
             );
         }
+        let previous_density = session.navigation.grid_density();
         match command {
             Command::PreviousDisplay | Command::NextDisplay => {
                 let display = session
@@ -251,6 +270,9 @@ impl Controller {
                     .adjacent(self.mtm, command == Command::NextDisplay)?;
                 if display != session.display {
                     session.navigation.rebase(display.local_bounds()?);
+                    if session.navigation.grid_density() != previous_density {
+                        save_grid_density(session.navigation.grid_density());
+                    }
                     session.display = display;
                     session.overlay.move_to(
                         display,
@@ -281,6 +303,9 @@ impl Controller {
                 );
             }
             Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
+        }
+        if session.navigation.grid_density() != previous_density {
+            save_grid_density(session.navigation.grid_density());
         }
         session.overlay.update(
             session
