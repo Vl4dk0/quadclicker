@@ -19,11 +19,15 @@ use std::rc::{Rc, Weak};
 pub enum Action {
     Command(Command),
     Failed(&'static str),
+    GridRepeat,
 }
 
 /// Shared dispatch stays main-thread-only and contains no AppKit objects.
 pub struct Dispatch {
     router: RefCell<KeyRouter>,
+    repeat_timer: RefCell<Option<scheduling::RepeatTimer>>,
+    repeat_timing: Cell<Option<(f64, f64)>>,
+    weak_self: Weak<Dispatch>,
     queue: RefCell<VecDeque<(u64, Action)>>,
     generation: Cell<u64>,
     pending: Cell<bool>,
@@ -31,8 +35,11 @@ pub struct Dispatch {
 }
 impl Dispatch {
     pub fn new(controller: Weak<Controller>) -> Rc<Self> {
-        Rc::new(Self {
+        Rc::new_cyclic(|weak_self| Self {
             router: RefCell::new(KeyRouter::default()),
+            repeat_timer: RefCell::new(None),
+            repeat_timing: Cell::new(None),
+            weak_self: weak_self.clone(),
             queue: RefCell::new(VecDeque::new()),
             generation: Cell::new(0),
             pending: Cell::new(false),
@@ -40,6 +47,11 @@ impl Dispatch {
         })
     }
     pub fn activate(&self) {
+        self.repeat_timer.borrow_mut().take();
+        self.repeat_timing.set(Some((
+            objc2_app_kit::NSEvent::keyRepeatDelay(),
+            objc2_app_kit::NSEvent::keyRepeatInterval(),
+        )));
         self.advance();
         self.router.borrow_mut().activate();
     }
@@ -54,10 +66,46 @@ impl Dispatch {
     }
     pub fn set_mode(&self, mode: NavigationMode) {
         self.router.borrow_mut().set_mode(mode);
+        self.sync_movement_timer();
     }
     pub fn stop(&self) {
         self.router.borrow_mut().deactivate();
+        self.repeat_timer.borrow_mut().take();
         self.advance();
+    }
+    pub fn stride(&self) -> i16 {
+        self.router.borrow().stride()
+    }
+    pub fn grid_repeat(&self) -> Option<Command> {
+        self.router
+            .borrow()
+            .grid_movement()
+            .and_then(|(x, y)| (x != 0 || y != 0).then_some(Command::GridMove { x, y }))
+    }
+    fn sync_movement_timer(&self) {
+        let held = self.router.borrow().grid_movement().is_some();
+        if !held {
+            self.repeat_timer.borrow_mut().take();
+            self.queue
+                .borrow_mut()
+                .retain(|(_, action)| !matches!(action, Action::GridRepeat));
+            return;
+        }
+        if self.repeat_timer.borrow().is_some() {
+            return;
+        }
+        let Some((delay, interval)) = self.repeat_timing.get() else {
+            return;
+        };
+        let weak = self.weak_self.clone();
+        *self.repeat_timer.borrow_mut() =
+            scheduling::RepeatTimer::new(delay, interval, move || {
+                if let Some(dispatch) = weak.upgrade() {
+                    if dispatch.grid_repeat().is_some() {
+                        dispatch.enqueue(Action::GridRepeat);
+                    }
+                }
+            });
     }
     fn advance(&self) {
         // A generation is an opaque cancellation token, never a count.
@@ -76,6 +124,13 @@ impl Dispatch {
     }
     fn enqueue(&self, action: Action) {
         let mut queue = self.queue.borrow_mut();
+        if matches!(action, Action::GridRepeat)
+            && queue
+                .iter()
+                .any(|(_, action)| matches!(action, Action::GridRepeat))
+        {
+            return;
+        }
         if matches!(
             action,
             Action::Command(Command::PreviousDisplay | Command::NextDisplay)
@@ -94,6 +149,7 @@ impl Dispatch {
         if queue.len() >= 128 {
             queue.clear();
             self.router.borrow_mut().deactivate();
+            self.repeat_timer.borrow_mut().take();
             queue.push_back((
                 self.generation.get(),
                 Action::Failed("Input processing fell behind. Activate again."),
@@ -198,6 +254,7 @@ unsafe extern "C-unwind" fn callback(
                 return event.as_ptr();
             }
             dispatch.router.borrow_mut().interception_lost();
+            dispatch.sync_movement_timer();
             let reason = if kind == CGEventType::TapDisabledByTimeout {
                 "macOS disabled keyboard interception because its callback timed out. Choose Activate in the menu to recover."
             } else {
@@ -226,7 +283,12 @@ unsafe extern "C-unwind" fn callback(
                 56 | 60 => flags.contains(CGEventFlags::MaskShift),
                 _ => false,
             };
-            (false, router.modifier_changed(code, pressed))
+            let redraw = router.set_control(flags.contains(CGEventFlags::MaskControl));
+            let command = router.modifier_changed(code, pressed);
+            (
+                false,
+                command.or(if redraw { Some(Command::Refresh) } else { None }),
+            )
         } else if kind == CGEventType::KeyUp {
             (router.release(code), None)
         } else if kind == CGEventType::KeyDown {
@@ -235,12 +297,10 @@ unsafe extern "C-unwind" fn callback(
                 code,
                 Modifiers {
                     shift: flags.contains(CGEventFlags::MaskShift),
+                    control: flags.contains(CGEventFlags::MaskControl),
                     function: flags.contains(CGEventFlags::MaskSecondaryFn),
-                    shortcut: flags.intersects(
-                        CGEventFlags::MaskCommand
-                            | CGEventFlags::MaskControl
-                            | CGEventFlags::MaskAlternate,
-                    ),
+                    shortcut: flags
+                        .intersects(CGEventFlags::MaskCommand | CGEventFlags::MaskAlternate),
                 },
                 CGEvent::integer_value_field(
                     Some(event_ref),
@@ -251,6 +311,7 @@ unsafe extern "C-unwind" fn callback(
             (false, None)
         };
         drop(router);
+        dispatch.sync_movement_timer();
         if let Some(command) = command {
             dispatch.enqueue(Action::Command(command));
         }
@@ -268,6 +329,7 @@ unsafe extern "C-unwind" fn callback(
             if let Ok(mut router) = dispatch.router.try_borrow_mut() {
                 router.deactivate();
             }
+            dispatch.sync_movement_timer();
             dispatch.enqueue(Action::Failed(
                 "Keyboard interception failed. Activate again.",
             ));

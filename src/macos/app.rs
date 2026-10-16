@@ -155,7 +155,7 @@ impl Controller {
         let overlay = Overlay::new(
             self.mtm,
             display,
-            navigation.overlay_state(self.dispatch.show_hints()),
+            navigation.overlay_state(self.dispatch.show_hints(), self.dispatch.stride()),
         );
         if self.tap.borrow().is_none() {
             let tap = EventTap::new(self.dispatch.clone())?;
@@ -204,6 +204,15 @@ impl Controller {
                     self.show_error(message);
                     break;
                 }
+                Action::GridRepeat => {
+                    if let Some(command) = self.dispatch.grid_repeat() {
+                        if let Err(error) = self.command(command) {
+                            self.stop();
+                            self.show_error(&format!("{error:#}"));
+                            break;
+                        }
+                    }
+                }
                 Action::Command(command) => {
                     if !self.dispatch.active() {
                         continue;
@@ -245,13 +254,17 @@ impl Controller {
                     session.display = display;
                     session.overlay.move_to(
                         display,
-                        session.navigation.overlay_state(self.dispatch.show_hints()),
+                        session
+                            .navigation
+                            .overlay_state(self.dispatch.show_hints(), self.dispatch.stride()),
                     );
                 }
                 return Ok(());
             }
             Command::Descend(quadrant) => session.navigation.descend(quadrant),
             Command::Move(direction) => session.navigation.move_cell(direction),
+            Command::GridMove { x, y } => session.navigation.move_cells(x, y),
+            Command::Refresh => {}
             Command::ResizeGrid { refine } => session.navigation.resize_grid(refine),
             Command::SwitchMode(mode) => {
                 session.navigation.switch_mode(mode);
@@ -269,9 +282,11 @@ impl Controller {
             }
             Command::Exit | Command::Dismiss | Command::Activate => return Ok(()),
         }
-        session
-            .overlay
-            .update(session.navigation.overlay_state(self.dispatch.show_hints()));
+        session.overlay.update(
+            session
+                .navigation
+                .overlay_state(self.dispatch.show_hints(), self.dispatch.stride()),
+        );
         Ok(())
     }
     fn show_permission_help(&self) {

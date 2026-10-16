@@ -221,6 +221,11 @@ impl GridSelection {
         }
     }
 
+    fn move_cells(&mut self, x: i16, y: i16) {
+        let last = i32::from(self.state.divisions - 1);
+        self.state.column = (i32::from(self.state.column) + i32::from(x)).clamp(0, last) as u16;
+        self.state.row = (i32::from(self.state.row) + i32::from(y)).clamp(0, last) as u16;
+    }
     fn resize(&mut self, refine: bool) {
         let divisions = if refine {
             if self.state.divisions >= MAX_GRID_DIVISIONS {
@@ -287,7 +292,7 @@ impl Navigation {
         }
     }
 
-    pub fn overlay_state(&self, show_hints: bool) -> OverlayState {
+    pub fn overlay_state(&self, show_hints: bool, stride: i16) -> OverlayState {
         OverlayState {
             selection: self.current(),
             root: self.root,
@@ -297,7 +302,7 @@ impl Navigation {
             quadtree_can_subdivide: self.mode == NavigationMode::Quadtree
                 && self.quadtree.can_subdivide(),
             destination_hints: if show_hints {
-                self.destination_hints()
+                self.destination_hints(stride)
             } else {
                 [None; 4]
             },
@@ -306,7 +311,7 @@ impl Navigation {
 
     /// Preview the same geometric transitions navigation uses, without changing
     /// the selection. Boundary no-ops have no useful destination to label.
-    fn destination_hints(&self) -> [Option<DestinationHint>; 4] {
+    fn destination_hints(&self, stride: i16) -> [Option<DestinationHint>; 4] {
         let keys = ['h', 'j', 'k', 'l'];
         std::array::from_fn(|index| {
             let destination = match self.mode {
@@ -324,14 +329,16 @@ impl Navigation {
                 }
                 NavigationMode::Grid => {
                     let mut preview = self.grid.clone();
-                    preview.move_cell(
-                        [
-                            Direction::Left,
-                            Direction::Down,
-                            Direction::Up,
-                            Direction::Right,
-                        ][index],
-                    );
+                    for _ in 0..stride {
+                        preview.move_cell(
+                            [
+                                Direction::Left,
+                                Direction::Down,
+                                Direction::Up,
+                                Direction::Right,
+                            ][index],
+                        );
+                    }
                     let destination = preview.current();
                     if destination == self.current() {
                         return None;
@@ -395,6 +402,9 @@ impl Navigation {
     pub fn move_cell(&mut self, direction: Direction) {
         self.grid.move_cell(direction);
     }
+    pub fn move_cells(&mut self, x: i16, y: i16) {
+        self.grid.move_cells(x, y);
+    }
     pub fn resize_grid(&mut self, refine: bool) {
         self.grid.resize(refine);
     }
@@ -425,6 +435,39 @@ pub fn event_point(local: Point, local_size: (f64, f64), quartz: Rect) -> Point 
 mod tests {
     use super::*;
     #[test]
+    fn grid_stride_and_diagonal_geometry_match_control_hints() {
+        let Some(root) = Rect::new(0.0, 0.0, 800.0, 800.0) else {
+            panic!("valid fixture")
+        };
+        let mut nav = Navigation::new_in_mode(root, NavigationMode::Grid);
+        for _ in 0..3 {
+            nav.resize_grid(true);
+        }
+        nav.move_cells(-4, -4);
+        let before = nav.current().midpoint();
+        let hints = nav.overlay_state(true, 3).destination_hints;
+        let Some(left_hint) = hints[0] else {
+            panic!("left destination exists")
+        };
+        let left = left_hint.point;
+        nav.move_cells(-3, 0);
+        assert_eq!(nav.current().midpoint(), left);
+        nav.move_cells(3, 3);
+        assert_eq!(nav.current().midpoint().x, before.x);
+        assert_eq!(
+            nav.current().midpoint().y,
+            before.y + nav.current().height * 3.0
+        );
+        nav.move_cells(i16::MAX, i16::MAX);
+        let edge = nav.current();
+        nav.move_cells(3, 3);
+        assert_eq!(nav.current(), edge);
+        nav.move_cells(i16::MIN, i16::MIN);
+        assert_eq!(nav.current().x, 0.0);
+        assert_eq!(nav.current().y, 0.0);
+    }
+
+    #[test]
     fn destination_hints_match_navigation_without_mutating_selection() {
         let Some(root) = Rect::new(-120.0, 30.0, 4096.0, 2048.0) else {
             panic!("valid fixture")
@@ -433,11 +476,14 @@ mod tests {
             let mut navigation = Navigation::new_in_mode(root, mode);
             let before = navigation.current();
             assert_eq!(
-                navigation.overlay_state(false).quadtree_can_subdivide,
+                navigation.overlay_state(false, 1).quadtree_can_subdivide,
                 mode == NavigationMode::Quadtree
             );
-            assert_eq!(navigation.overlay_state(false).destination_hints, [None; 4]);
-            let hints = navigation.overlay_state(true).destination_hints;
+            assert_eq!(
+                navigation.overlay_state(false, 1).destination_hints,
+                [None; 4]
+            );
+            let hints = navigation.overlay_state(true, 1).destination_hints;
             assert_eq!(navigation.current(), before);
             for (index, hint) in hints.iter().enumerate() {
                 let mut preview = Navigation::new_in_mode(root, mode);
@@ -472,19 +518,25 @@ mod tests {
                     for _ in 0..MAX_DEPTH {
                         navigation.descend(Quadrant::TopLeft);
                     }
-                    assert_eq!(navigation.overlay_state(true).destination_hints, [None; 4]);
-                    assert!(!navigation.overlay_state(false).quadtree_can_subdivide);
+                    assert_eq!(
+                        navigation.overlay_state(true, 1).destination_hints,
+                        [None; 4]
+                    );
+                    assert!(!navigation.overlay_state(false, 1).quadtree_can_subdivide);
                 }
                 NavigationMode::Grid => {
                     navigation.resize_grid(false);
-                    assert_eq!(navigation.overlay_state(true).destination_hints, [None; 4]);
+                    assert_eq!(
+                        navigation.overlay_state(true, 1).destination_hints,
+                        [None; 4]
+                    );
                     navigation.resize_grid(true);
                     let Some(destination) = Rect::new(0.0, 0.0, 8192.0, 4096.0) else {
                         panic!("valid fixture")
                     };
                     navigation.rebase(destination);
                     for hint in navigation
-                        .overlay_state(true)
+                        .overlay_state(true, 1)
                         .destination_hints
                         .into_iter()
                         .flatten()
@@ -499,12 +551,14 @@ mod tests {
             panic!("valid fixture")
         };
         assert_eq!(
-            Navigation::new(tiny).overlay_state(true).destination_hints,
+            Navigation::new(tiny)
+                .overlay_state(true, 1)
+                .destination_hints,
             [None; 4]
         );
         assert!(
             !Navigation::new_in_mode(tiny, NavigationMode::Quadtree)
-                .overlay_state(false)
+                .overlay_state(false, 1)
                 .quadtree_can_subdivide
         );
     }
@@ -647,18 +701,21 @@ mod tests {
             previous.resize_grid(true);
         }
         previous.move_cell(Direction::Up);
-        assert_eq!(previous.overlay_state(false).grid_divisions, Some(32));
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false).mode);
-        assert_eq!(reopened.overlay_state(false).mode, NavigationMode::Grid);
-        assert_eq!(reopened.overlay_state(false).grid_divisions, Some(2));
+        assert_eq!(previous.overlay_state(false, 1).grid_divisions, Some(32));
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false, 1).mode);
+        assert_eq!(reopened.overlay_state(false, 1).mode, NavigationMode::Grid);
+        assert_eq!(reopened.overlay_state(false, 1).grid_divisions, Some(2));
         assert!(reopened.current().contains(root.midpoint()));
 
         previous.switch_mode(NavigationMode::Quadtree);
         previous.descend(Quadrant::TopLeft);
-        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false).mode);
-        assert_eq!(reopened.overlay_state(false).mode, NavigationMode::Quadtree);
+        let reopened = Navigation::new_in_mode(root, previous.overlay_state(false, 1).mode);
+        assert_eq!(
+            reopened.overlay_state(false, 1).mode,
+            NavigationMode::Quadtree
+        );
         assert_eq!(reopened.current(), root);
-        assert_eq!(reopened.overlay_state(false).grid_divisions, None);
+        assert_eq!(reopened.overlay_state(false, 1).grid_divisions, None);
     }
 
     #[test]
@@ -695,7 +752,7 @@ mod tests {
         };
         let mut navigation = Navigation::new(root);
         navigation.switch_mode(NavigationMode::Grid);
-        assert_eq!(navigation.overlay_state(false).grid_divisions, Some(2));
+        assert_eq!(navigation.overlay_state(false, 1).grid_divisions, Some(2));
         navigation.move_cell(Direction::Left);
         navigation.move_cell(Direction::Up);
         let grid = navigation.current();

@@ -5,6 +5,8 @@ use crate::navigation::{Direction, NavigationMode, Quadrant};
 pub enum Command {
     Descend(Quadrant),
     Move(Direction),
+    GridMove { x: i16, y: i16 },
+    Refresh,
     ResizeGrid { refine: bool },
     SwitchMode(NavigationMode),
     ShowHints(bool),
@@ -21,6 +23,7 @@ pub enum Command {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
+    pub control: bool,
     pub shortcut: bool,
     pub function: bool,
 }
@@ -29,12 +32,14 @@ pub struct Modifiers {
 struct OwnedPress {
     modifiers: Modifiers,
     repeat_action: Option<Command>,
+    movement: Option<Direction>,
 }
 
 pub struct KeyRouter {
     active: bool,
     mode: NavigationMode,
     show_hints: bool,
+    control: bool,
     held: [Option<OwnedPress>; 256],
 }
 
@@ -44,6 +49,7 @@ impl Default for KeyRouter {
             active: false,
             mode: NavigationMode::default(),
             show_hints: false,
+            control: false,
             held: [None; 256],
         }
     }
@@ -93,9 +99,13 @@ impl KeyRouter {
     fn cancel_repeats(&mut self) {
         for press in self.held.iter_mut().flatten() {
             press.repeat_action = None;
+            press.movement = None;
         }
     }
     pub fn modifier_changed(&mut self, code: usize, pressed: bool) -> Option<Command> {
+        if matches!(code, 59 | 62) && self.mode == NavigationMode::Grid {
+            return None;
+        }
         self.cancel_repeats();
         // Fn stays available as an activation-chord prefix, just as Shift stays
         // available for reset. Modifiers pass through to preserve target state.
@@ -106,6 +116,34 @@ impl KeyRouter {
         Some(Command::Dismiss)
     }
 
+    pub fn set_control(&mut self, control: bool) -> bool {
+        let changed = self.control != control;
+        self.control = control;
+        changed && self.active && self.mode == NavigationMode::Grid
+    }
+    pub fn stride(&self) -> i16 {
+        if self.control { 3 } else { 1 }
+    }
+    pub fn grid_movement(&self) -> Option<(i16, i16)> {
+        if !self.active || self.mode != NavigationMode::Grid {
+            return None;
+        }
+        let mut x = 0;
+        let mut y = 0;
+        let mut held = false;
+        for press in self.held.iter().flatten() {
+            if let Some(direction) = press.movement {
+                held = true;
+                match direction {
+                    Direction::Left => x -= 1,
+                    Direction::Right => x += 1,
+                    Direction::Up => y -= 1,
+                    Direction::Down => y += 1,
+                }
+            }
+        }
+        held.then_some((x * self.stride(), y * self.stride()))
+    }
     fn toggle(&mut self) -> Command {
         if self.active {
             self.deactivate();
@@ -121,10 +159,18 @@ impl KeyRouter {
         modifiers: Modifiers,
         repeat: bool,
     ) -> (bool, Option<Command>) {
+        self.control = modifiers.control;
         let Some(held) = self.held.get_mut(code) else {
             return (false, None);
         };
         if let Some(press) = held {
+            if press.movement.is_some() {
+                if modifiers.shift || modifiers.function || modifiers.shortcut || !self.active {
+                    press.movement = None;
+                    press.repeat_action = None;
+                }
+                return (true, None);
+            }
             // Ownership lasts through key-up, but the original action can only
             // repeat within its uninterrupted mode, session and modifiers.
             if modifiers != press.modifiers || !self.active {
@@ -133,10 +179,16 @@ impl KeyRouter {
             return (true, if repeat { press.repeat_action } else { None });
         }
         let activation_key = code == 160 || (code == 49 && modifiers.function);
-        if activation_key && !modifiers.shortcut && !modifiers.shift && !repeat {
+        if activation_key
+            && !modifiers.shortcut
+            && !modifiers.control
+            && !modifiers.shift
+            && !repeat
+        {
             *held = Some(OwnedPress {
                 modifiers,
                 repeat_action: None,
+                movement: None,
             });
             return (true, Some(self.toggle()));
         }
@@ -153,7 +205,13 @@ impl KeyRouter {
         // Enter action, including the OS mapping of Fn+Return to that key code.
         let command = if code == 53 {
             Some(Command::Exit)
-        } else if modifiers.shortcut || (modifiers.function && code != 76) {
+        } else if modifiers.shortcut
+            || (modifiers.function && code != 76)
+            || (modifiers.control
+                && !(self.mode == NavigationMode::Grid
+                    && !modifiers.shift
+                    && matches!(code, 4 | 37 | 38 | 40)))
+        {
             None
         } else {
             match code {
@@ -197,6 +255,17 @@ impl KeyRouter {
             }
         };
         if let Some(command) = command {
+            if matches!(
+                command,
+                Command::Reset | Command::PreviousDisplay | Command::NextDisplay
+            ) {
+                self.cancel_repeats();
+            }
+            let movement = if let Command::Move(direction) = command {
+                Some(direction)
+            } else {
+                None
+            };
             let repeat_action = match command {
                 Command::Descend(_) | Command::Move(_) | Command::ResizeGrid { .. } => {
                     Some(command)
@@ -207,7 +276,16 @@ impl KeyRouter {
             self.held[code] = Some(OwnedPress {
                 modifiers,
                 repeat_action,
+                movement,
             });
+            if let Some(direction) = movement {
+                let (x, y) = self.grid_movement().unwrap_or((0, 0));
+                let command = match direction {
+                    Direction::Left | Direction::Right => Command::GridMove { x, y: 0 },
+                    Direction::Up | Direction::Down => Command::GridMove { x: 0, y },
+                };
+                return (true, Some(command));
+            }
             if command == Command::Exit {
                 self.deactivate();
             }
@@ -218,6 +296,7 @@ impl KeyRouter {
             self.held[code] = Some(OwnedPress {
                 modifiers,
                 repeat_action: None,
+                movement: None,
             });
             self.deactivate();
             (true, Some(Command::Dismiss))
@@ -228,6 +307,108 @@ impl KeyRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn grid_chords_share_a_vector_and_keep_remaining_keys_after_release() {
+        let mut router = KeyRouter::default();
+        let plain = Modifiers::default();
+        router.activate();
+        assert_eq!(
+            router.press(4, plain, false).1,
+            Some(Command::GridMove { x: -1, y: 0 })
+        );
+        assert_eq!(
+            router.press(38, plain, false).1,
+            Some(Command::GridMove { x: 0, y: 1 })
+        );
+        assert_eq!(router.grid_movement(), Some((-1, 1)));
+        assert_eq!(router.press(38, plain, true), (true, None));
+        assert!(router.release(38));
+        assert_eq!(router.grid_movement(), Some((-1, 0)));
+        assert!(router.release(4));
+        assert_eq!(router.grid_movement(), None);
+        router.press(38, plain, false);
+        router.press(4, plain, false);
+        router.release(4);
+        assert_eq!(router.grid_movement(), Some((0, 1)));
+        // An opposing press cancels only its axis, including its initial action.
+        router.press(4, plain, false);
+        assert_eq!(
+            router.press(37, plain, false).1,
+            Some(Command::GridMove { x: 0, y: 0 })
+        );
+        assert_eq!(router.grid_movement(), Some((0, 1)));
+        router.release(4);
+        assert_eq!(router.grid_movement(), Some((1, 1)));
+    }
+
+    #[test]
+    fn control_changes_live_stride_without_rearming_other_shortcuts() {
+        let mut router = KeyRouter::default();
+        let plain = Modifiers::default();
+        let control = Modifiers {
+            control: true,
+            ..plain
+        };
+        router.activate();
+        assert!(router.set_control(true));
+        assert_eq!(router.modifier_changed(59, true), None);
+        assert_eq!(
+            router.press(4, control, false).1,
+            Some(Command::GridMove { x: -3, y: 0 })
+        );
+        router.press(38, control, false);
+        assert_eq!(router.grid_movement(), Some((-3, 3)));
+        assert!(router.set_control(false));
+        assert_eq!(router.modifier_changed(59, false), None);
+        assert_eq!(router.grid_movement(), Some((-1, 1)));
+        router.modifier_changed(56, true);
+        assert_eq!(router.grid_movement(), None);
+        assert_eq!(router.press(4, plain, true), (true, None));
+        router.deactivate();
+        router.release(4);
+        assert_eq!(router.press(160, control, false), (false, None));
+        router.activate();
+        assert_eq!(router.press(46, control, false).1, Some(Command::Dismiss));
+        router.interception_lost();
+        router.set_mode(NavigationMode::Quadtree);
+        router.activate();
+        assert_eq!(router.modifier_changed(59, true), Some(Command::Dismiss));
+    }
+
+    #[test]
+    fn grid_gestures_cannot_survive_target_or_session_transitions() {
+        let plain = Modifiers::default();
+        let shifted = Modifiers {
+            shift: true,
+            ..plain
+        };
+        for (code, modifiers) in [
+            (31, shifted),
+            (4, shifted),
+            (37, shifted),
+            (46, plain),
+            (53, plain),
+            (0, plain),
+        ] {
+            let mut router = KeyRouter::default();
+            router.activate();
+            router.press(38, plain, false);
+            router.press(code, modifiers, false);
+            assert_eq!(router.grid_movement(), None);
+            assert_eq!(router.press(38, plain, true), (true, None));
+        }
+        let mut router = KeyRouter::default();
+        router.activate();
+        router.press(38, plain, false);
+        router.deactivate();
+        router.activate();
+        assert_eq!(router.grid_movement(), None);
+        router.press(38, plain, true);
+        assert_eq!(router.grid_movement(), None);
+        router.interception_lost();
+        assert!(router.is_drained());
+    }
+
     #[test]
     fn default_mode_hints_and_removed_controls() {
         let mut router = KeyRouter::default();
@@ -309,6 +490,7 @@ mod tests {
                 36,
                 Modifiers {
                     shift: true,
+                    control: false,
                     shortcut: false,
                     function: false
                 },
@@ -323,6 +505,7 @@ mod tests {
                 32,
                 Modifiers {
                     shift: false,
+                    control: false,
                     shortcut: true,
                     function: false
                 },
@@ -340,6 +523,7 @@ mod tests {
                         code,
                         Modifiers {
                             shift,
+                            control: false,
                             shortcut: true,
                             function: false
                         },
@@ -364,23 +548,20 @@ mod tests {
         assert_eq!(router.press(46, Modifiers::default(), true), (true, None));
         assert_eq!(
             router.press(4, Modifiers::default(), false),
-            (true, Some(Command::Move(Direction::Left)))
+            (true, Some(Command::GridMove { x: -1, y: 0 }))
         );
         assert!(router.release(4));
         assert!(router.release(46));
         for (code, command) in [
-            (38, Command::Move(Direction::Down)),
-            (40, Command::Move(Direction::Up)),
-            (37, Command::Move(Direction::Right)),
+            (38, Command::GridMove { x: 0, y: 1 }),
+            (40, Command::GridMove { x: 0, y: -1 }),
+            (37, Command::GridMove { x: 1, y: 0 }),
         ] {
             assert_eq!(
                 router.press(code, Modifiers::default(), false),
                 (true, Some(command))
             );
-            assert_eq!(
-                router.press(code, Modifiers::default(), true),
-                (true, Some(command))
-            );
+            assert_eq!(router.press(code, Modifiers::default(), true), (true, None));
             assert!(router.release(code));
         }
         let shifted = Modifiers {
@@ -445,7 +626,7 @@ mod tests {
         assert_eq!(router.mode(), NavigationMode::Grid);
         assert_eq!(
             router.press(4, Modifiers::default(), false),
-            (true, Some(Command::Move(Direction::Left)))
+            (true, Some(Command::GridMove { x: -1, y: 0 }))
         );
         assert!(router.release(4));
     }
@@ -474,18 +655,15 @@ mod tests {
         assert!(router.release(46));
         assert_eq!(
             router.press(38, plain, false),
-            (true, Some(Command::Move(Direction::Down)))
+            (true, Some(Command::GridMove { x: 0, y: 1 }))
         );
-        assert_eq!(
-            router.press(38, plain, true),
-            (true, Some(Command::Move(Direction::Down)))
-        );
+        assert_eq!(router.press(38, plain, true), (true, None));
         assert_eq!(router.press(38, shifted, true), (true, None));
         assert_eq!(router.press(38, plain, true), (true, None));
         assert!(router.release(38));
         assert_eq!(
             router.press(4, plain, false),
-            (true, Some(Command::Move(Direction::Left)))
+            (true, Some(Command::GridMove { x: -1, y: 0 }))
         );
         assert_eq!(router.modifier_changed(56, true), None);
         assert_eq!(router.modifier_changed(56, false), None);
@@ -568,6 +746,7 @@ mod tests {
                 53,
                 Modifiers {
                     shift: false,
+                    control: false,
                     shortcut: true,
                     function: false
                 },
@@ -581,6 +760,7 @@ mod tests {
                 36,
                 Modifiers {
                     shift: true,
+                    control: false,
                     shortcut: true,
                     function: false
                 },
@@ -617,6 +797,7 @@ mod tests {
                     160,
                     Modifiers {
                         shift: false,
+                        control: false,
                         shortcut: true,
                         function: false
                     },
@@ -654,11 +835,13 @@ mod tests {
         for disallowed in [
             Modifiers {
                 function: true,
+                control: false,
                 shift: true,
                 shortcut: false,
             },
             Modifiers {
                 function: true,
+                control: false,
                 shift: false,
                 shortcut: true,
             },
