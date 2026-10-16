@@ -15,6 +15,11 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
 #[derive(Clone, Copy)]
 pub enum Action {
     Command(Command),
@@ -77,6 +82,18 @@ impl Dispatch {
         self.router.borrow().stride()
     }
     pub fn grid_repeat(&self) -> Option<Command> {
+        if self.router.borrow().grid_movement().is_some() {
+            // Secure input can hide releases without disabling the event tap.
+            // SAFETY: This public, pointer-free query returns Carbon Boolean (u8).
+            // Dispatch and its timer execute only on the main thread, as required.
+            if unsafe { IsSecureEventInputEnabled() } != 0 {
+                self.router.borrow_mut().interception_lost();
+                self.repeat_timer.borrow_mut().take();
+                self.advance();
+                self.enqueue(Action::Command(Command::Dismiss));
+                return None;
+            }
+        }
         self.router
             .borrow()
             .grid_movement()
