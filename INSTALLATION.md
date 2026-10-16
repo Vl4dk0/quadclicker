@@ -17,15 +17,15 @@ The Mission Control icon button is often in the F3 position; standard F3 is a di
 
 The overlay starts on the display containing the pointer. It stays out of keyboard focus and lets physical mouse clicks pass through. Navigation uses physical key positions, independent of keyboard layout.
 
-Grid is the default when no valid mode preference has been saved; an existing Quadtree preference is preserved. The last mode and destination-hint visibility are remembered across activations and app restarts. T shows or hides hints, which are initially hidden. H/J/K/L labels mark the click targets those keys would select. Each activation resets navigation to a Quadtree root or a 2×2 Grid; previous selection, density, and display are not restored. Grid also starts at 2×2 when first selected in a session.
+Grid is the default when no valid mode preference has been saved; an existing Quadtree preference is preserved. The last mode and destination-hint visibility are remembered across activations and app restarts. T shows or hides hints, which are initially hidden. H/J/K/L labels mark the click targets those keys would select; in Grid, holding Ctrl previews the three-cell targets. Each activation resets navigation to a Quadtree root or a 2×2 Grid; previous selection, density, and display are not restored. Grid also starts at 2×2 when first selected in a session.
 
 Holding navigation keys repeats using macOS’s keyboard repeat delay and speed: H/J/K/L and Shift+J/Shift+K in Grid; H/J/K/L, O, and Backspace in Quadtree. Click, mode switch, hint toggle, reset, activation, and display switch act once per press.
 
-In Quadtree, H/J/K/L select the top-left/bottom-left/bottom-right/top-right quarter. In Grid, H/J/K/L move left/down/up/right; Shift+J doubles cells per side and Shift+K halves them. Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size.
+In Quadtree, H/J/K/L select the top-left/bottom-left/bottom-right/top-right quarter. In Grid, H/J/K/L move left/down/up/right; Shift+J doubles cells per side and Shift+K halves them. Ctrl+H/J/K/L moves three cells at a time. Holding multiple directions moves along both axes; H+J moves down-left, for example. Opposite directions cancel on their axis, and releasing a key leaves the other directions active. Pressing or releasing Ctrl while moving changes the stride without adding an immediate step. Grid movement stops at display edges. Grid density ranges from 1×1 to 512×512, limited by a minimum one-point cell size.
 
 Shift+H and Shift+L switch to the previous or next display in both modes. Displays are ordered left to right, then top to bottom, with wraparound. Switching preserves the mode, grid density or quadtree depth, and the target’s relative position; depth or density is reduced only when needed to keep cells at least one logical point. Shift+J and Shift+K resize only in Grid.
 
-Enter clicks without modifiers; native keypad Enter is also supported. New unsupported key presses silently dismiss the overlay; their down, repeats, and release are consumed. Modifier changes still pass through, and keys already held before activation keep their original ownership.
+Enter clicks without modifiers; native keypad Enter is also supported. New unsupported key presses silently dismiss the overlay; their down, repeats, and release are consumed. Modifier changes still pass through, and keys already held before activation keep their original ownership. Control alone keeps Grid open; Command and Option dismiss it. Quadtree retains its existing modifier rules.
 
 ## Updates and limitations
 
